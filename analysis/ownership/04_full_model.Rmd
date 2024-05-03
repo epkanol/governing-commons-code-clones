@@ -25,52 +25,6 @@ library(ggpubr)
 library(tidybayes)
 options(dplyr.summarise.inform = FALSE)
 ```
-## Exploring how code duplicates are introduced by certain teams
-
-Models are cached in subdirectory, as they take considerable time to run.
-Expect multiple hours for the complete, multi-level model with all the data set.
-You might need to remove the cached models when changing some parameters (though formula or data changes are usually detected by brms).
-
-We move away from zero-based scaling, instead opting for scaling the logarithm of the severely right-skewed values (added, removed, complexity, duplicated lines).
-We are also heeding the advice of Gelman: https://statmodeling.stat.columbia.edu/2019/08/21/you-should-usually-log-transform-your-positive-data/
-This also means that the linear model will be based on the _magnitude_ of the change in parameter (e.g. 0, 1, 2.7, 7.3, 19.8 added lines/existing complexity). So each individual line will have marginally lower impact, but the scale of the parameter will still matter.
-
-A simple scientific model, where rates of change is taken from the population only, and the intercept varies per group becomes:
-
-$log(\lambda) = \beta_{0,i} + \beta_A A_i + \beta_C C_i + \beta_D D_i$
-
-where
-
-$A_i = \frac{ln(added_i+1) - \hat{\mu_{\alpha}}}{\hat{\sigma_{\alpha}}}$
-
-and
-$\hat{\mu_{\alpha}} = mean(ln(added+1))$
-$\hat{\sigma_{\alpha}} = stddev(ln(added+1))$
-
-$C_i = \frac{ln(complexity_i+1) - \hat{\mu_{\gamma}}}{\hat{\sigma_{\gamma}}}$
-
-and
-$\hat{\mu_{\gamma}} = mean(ln(complexity+1))$
-
-$\hat{\sigma_{\gamma}} = stddev(ln(complexity+1))$
-
-and
-$D_i = \frac{ln(dupblocks_i+1) - \hat{\mu_{\delta}}}{\hat{\sigma_{\delta}}}$
-
-and
-$\hat{\mu_{\delta}} = mean(ln(dupblocks+1))$
-
-$\hat{\sigma_{\delta}} = stddev(ln(dupblocks+1))$
-
-This corresponds to the following multiplicative model for $\lambda$ (also called $\mu$ in the negative binomial context):
-
-$\lambda_i = e^{\beta_{0,i}} (\frac{added_i+1}{e^\hat{\mu_\alpha}})^{\frac{\beta_A}{\hat{\sigma_\alpha}}} (\frac{complexity_i+1}{e^\hat{\mu_\gamma}})^{\frac{\beta_C}{\hat{\sigma_\gamma}}} (\frac{duplicates_i+1}{e^\hat{\mu_\delta}})^{\frac{\beta_D}{\hat{\sigma_\delta}}}$
-
-In this equation, $added$, $complexity$ and $duplicates$ are on their natural scale, starting at 0 and counting upwards.
-
-Depending on which parameters we include in the group-level effect, the exponent will change accordingly (hence the $i$ in $\beta_{0,i}$ for the model where only the intercept changes per team and repo).
-The other parameters, $\hat{\mu_\alpha}$ and $\hat{\sigma_\alpha}$, et al. are just normalizing constants, defined as the mean and standard deviation of the logarithm of the corresponding metric count.
-
 
 ```{r}
 set.seed(12345)
@@ -79,6 +33,7 @@ MODEL_CACHE <- "added-M_pop_A_team_team_repo_RDC_zi_sd025_gamma05"
 ```
 
 # Settings
+
 Models are stored in the following directory, which must exist prior to knitting this document:
 
 ```{r}
@@ -87,7 +42,15 @@ cat(normalizePath(paste(getwd(), dirname(cachefile(MODEL_CACHE)), sep="/"), must
 
 The used cache directory can be controlled via the cache parameter to Rmd - it can be useful to experiment with this parameter if you Knit the document manually in RStudio.
 
-# Variation between teams, and between teams and repos
+# Full model, with team- and team/repo- variation for removed lines, existing complexity and existing number of clones
+
+Compared to the previous model, we now add two more predictors, existing complexity and existing number of clones in the file, prior to the change.
+
+Both of these additional predictors have the same structure as the previous added and removed lines - they are both zero-bounded, and highly right-skewed.
+Therefore, we log-transform them, and center the resulting logarithm, so the value used in the model is zero-centered with standard deviation 1.
+
+This means that we can use the same priors as we did for the prior model, $\mathcal{M}_1$.
+The only difference is that now our model incorporates many more predictors.
 
 ```{r}
 d <- data |> select(y=INTROD,
@@ -122,6 +85,10 @@ priors <- c(prior(normal(0, 0.5), class = Intercept),
 )
 ```
 
+The same structure of priors as in $\mathcal{M}_1$ is used here---the only thing is that we have added more numerical predictors, scaled and centered like the 
+
+## Prior Predictive Checks
+
 ```{r brms-ppc}
 M_ppc <- brm(data = d,
       family = zero_inflated_negbinomial,
@@ -151,26 +118,28 @@ yrep <- posterior_predict(m, newdata = d) # or nd
 ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0)) + ggtitle("Prior predicted proportion of zeros")
 ```
 
-### Max predicted value
+The general pattern that we have seen in both $\mathcal{M}_0$ and $\mathcal{M}_1$ remains. Our model expects between $40%$, up to $100%$ zeros, with the peak around $75%$, and lower values at the extremes (especially low below $50%$).
 
-We had to adapt our priors quite significantly to get some realistic estimates.
+### Max predicted value
 
 ```{r ppc_max}
 (sim_max <- ppc_stat(y = d$y, yrep, stat = "max") + ggtitle("Prior predicted max values")
 )
 ```
 
-Scaling to more reasonable values
+Relative to the prior models, the maximum value is now more wild---ranging into the tens of thousands, which is clearly unrealistic.
+
+If we scale the plot to more reasonable values, we see that there is higher probability of 500 to 1000 introduced clones than in $\mathcal{M}_1$, and the most likely value is still below the observed maximum.
+So the observed value still fits well within the range of predictions.
 
 ```{r}
 sim_max + scale_x_continuous(limits = c(0,1000)) + ggtitle("Prior predicted max values up to 1000")
 ```
 
-
 ### 99th percentile
 
-The 99th percentile is a more stable metric than the maximum value for highly right-skewed data like ours.
-The priors do a good job of matching the observations.
+Relative to $\mathcal{M}_1$, our new model Q99 predictions range wider (up to 200, where $\mathcal{M}_1$ had 100).
+But the general pattern fits the observations, and we know that, because we have more predictors, our model will swing more in its predictions.
 
 ```{r ppc_q99}
 ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Prior predicted Q99 vs. observed value")
@@ -178,7 +147,7 @@ ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Prior p
 
 ### 99th vs 95th percentile
 
-We can even plot the 95th percentile versus the 99th, just to show how the spread of likely values vary.
+The same pattern repeats for the Q99-vs-Q95 plot. Somewhat wider predicted values, but still encompassing the observations.
 
 ```{r ppc_2d}
 p <- ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + theme(legend.position="bottom") #+ ggtitle("Prior predicted Q95 vs Q99")
@@ -187,16 +156,15 @@ p
 
 ### Standard deviation
 
-The standard deviation of the predictions is a bit harder to grasp intuitively.
-But our prior information encompass the observed value well.
+Instead of ranging up to 1200, the standard deviation now ranges to about 3000.
+We need to scale the $x$-axis to see the real pattern.
 
 ```{r ppc_sd}
 (p <- ppc_stat(y = d$y, yrep, stat = "sd") + ggtitle("Prior predicted stddev vs. observed value")
 )
 ```
 
-Zooming in to show the distribution in more detail.
-Relative to the intercept model, this model has a slightly wider standard deviation range.
+Relative to $\mathcal{M}_1$, this model has a wider standard deviation range, but it still encompass the observed value well.
 
 ```{r}
 p + scale_x_continuous(limits=c(0,30))
@@ -204,19 +172,14 @@ p + scale_x_continuous(limits=c(0,30))
 
 ### Group-level predictions
 
-We can use groups present in the data to show how predictions stack up to observations made per group.
-Here, beside showing the distribution, it is also important to consider the scale on the respective $x$-axis.
-Teams with few, and varied, observations (such as UI and Unknown) are more reliant on the priors, and will have a larger range of predictions.
-
+The group-level data is also wider than the prior model. The Brown team now ranges (based only on prior knowledge) up to 15000, and the Red team up to 4000.
 
 ```{r ppc_grouped_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per team")
 ```
 
-Plotting prior predictions per repo can show how our model compares relative to repo-level metrics.
-We see that Integration tests are a bit of an anomaly.
-Our model does not incorporate any repo-level group (only the team:repo-level grouping, that is, how each team behaves in a particular repo), so all predictions will follow the same distribution.
-Note how all $x$-axes are quite similar in scale (the difference comes from random variations, and differing number of data points arising from each reposiotory)
+Also this model will show Integration tests to be a bit of an anomaly, with predictions (based only on prior knowledge) ranging up to 9000.
+Because we have not yet trained our model, these predictions indicate that something is different (e.g. more added or less removed lines, different complexity) in this repository, compared to the others.
 
 ```{r ppc_grouped_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per repository")
@@ -263,6 +226,8 @@ lapply(plots, function(i) {
   })
 ```
 
+The "caterpillar plots" show that the chains mixed well also for this model.
+
 ```{r, rhat_neff}
 mcmc_plot(m, type="rhat")
 mcmc_plot(m, type="rhat_hist")
@@ -270,16 +235,18 @@ mcmc_plot(m, type="neff")
 mcmc_plot(m, type="neff_hist")
 ```
 
+Both MCMC chains, $\hat{R}$ and $N_{eff}$ ratio looks good.
+
 ```{r plot_loo}
 loo <- loo(m)
 loo
 plot(loo)
 ```
 
-Wider priors mean more outliers-13 with these priors...
+This, more complex, model also has more outliers that need to be analyzed with reloo.
+We now have 12 data points with PSIS-estimated Pareto-k value greater than the 0.7 threshold.
 
-There are 11 outlier points that need to be analysed (e.g. with reloo)
-(7 over 0.7 and 4 over 1.0)
+Reloo is disabled by default, but could be enabled by setting the RELOO environment variable (which in turn will set the `reloo` parameter of this document.
 
 ```{r reloo, eval=params$reloo}
 reloofile <- cachefile(paste0("reloo-", MODEL_CACHE, ".rds"))
@@ -292,6 +259,10 @@ if (file.exists(reloofile)) {
     saveRDS(reloo, reloofile)
 }
 ```
+Note that the reloo results are cached, and included in the docker image by default.
+If you want to reproduce the reloo manually, set a separate cache dir (and mount it into the docker image), and enable the RELOO environment variable.
+It will take more than one day to complete all `reloo`, so it is best done over a weekend.
+
 ```{r plot_reloo, eval=params$reloo}
 # plotting the recalculated values
 plot(reloo)
@@ -300,6 +271,7 @@ influencers <- data[loo::pareto_k_ids(reloo),]
 influencers |> group_by(repo,committerteam) |> tally()
 ```
 
+According to the reloo function, all Pareto-k values are below 0.7, so we should be able to trust the model inferences.
 
 ## Posterior predictive checks
 
@@ -313,7 +285,7 @@ yrep <- posterior_predict(m)
 ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0))
 ```
 
-The distribution of zeros are spot-on.
+The distribution of zeros is marginally higher than the observed value, but it still encompasses the observed proportion.
 
 ### Posterior max value
 
@@ -322,15 +294,22 @@ The distribution of zeros are spot-on.
 )
 ```
 
+Our more complex model are similar to model $\mathcal{M}_1$, but expects a slightly wider range of values, up to 7500 duplicates ($\mathcal{M}_1$ had up to 6000).
+But the most likely value is still close to the observed max value (150).
+
 ```{r}
 sim_max + scale_x_continuous(limits = c(0,1000))
 ```
+
+When scaling to $0--1000$, we see that the most likely prediction of our model is actually somewhat less than 150 (observed max value). But then the predictions drop off towards 750, or even 1000.
 
 ### Posterior standard distribution
 
 ```{r posterior_sd}
 ppc_stat(y = d$y, yrep, stat = "sd")
 ```
+
+Same principle as for the other metrics---the standard deviation is slightly wider than for model $\mathcal{M}_1$.
 
 ### Posterior Q99
 
@@ -344,44 +323,46 @@ ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Posteri
 ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + ggtitle("Posterior predicted Q95 vs Q99")
 ```
 
+The 95th and 99th quantiles are spot on the observed values of 1 and 5, respectively.
+Even smaller variations than $\mathcal{M}_1$ are expected for Q99 (the histograms for 4 and 6 are smaller, and more evenly balanced in this model).
+
 ### Posterior grouped predictions
 
 ```{r posterior_max_by_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$team) + ggtitle("Posterior predictive max observation per team")
 ```
 
-The max value per team varies between teams, but for most teams the observed value fall reasonably well within the predictions.
-Red team  is the exception.
-Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour will not be visible.
+The expected max value per team varies a lot between teams.
+For some teams (e.g. Arch, Red, Violet), the model is reasonably sure that it will fall between 150-400, while for other teams (Brown, Green, Orange), it would expect up to 8000)
 
 ```{r posterior_max_per_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$repo) + ggtitle("Posterior predictive max observation per repo")
 ```
 
-Posterior max per repository have some variation, in particular in Saturn and Jupiter.
+Some repositories (rather, teams in some repositories, as our model do not consider repo-level variation separately), like Integration tests and Mars, expect up to 7500-8000 introduced clones.
+The others expect around 5-600, so an order of magnitude less.
 
 ```{r posterior_q99_by_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quartile per team")
 ```
 
-The 99th percentile value predictions seem very well fitted. Predictions surround the observation nicely.
+The 99th percentile value predictions seem very well fitted. Predictions surround the observation nicely, and the UI team continue to be the most varying (given that they have not contributed much in the data set).
 
 ```{r posterior_q99_by_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posterior predictive 99% quartile per repo")
 ```
 
-Rootogram, full scale
+Similar for the repository-level variation--the predictions surround the observed Q99 value nicely.
+
+
+### Rootogram
 
 ```{r rootogram}
 (rootogram <- pp_check(m, type = "rootogram", style="suspended")
 )
 ```
 
-Rootogram, sized according to reasonable (observed) values.
-
-```{r}
-rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
-```
+We need to size to rootgram scale to see anything of value.
 
 ```{r}
 topleft=data.frame(x=c(0, 0),
@@ -394,6 +375,8 @@ p <- ggdraw() + draw_plot(main.plot) + draw_plot(inset.plot, x=0.25, y=.5, width
 p
 ```
 
+We see that the suspended histogram "line up" around the $x$-axis, on both sides (like residuals usually do).
+This indicates that there is no systeming over- or under-predictions going on in our model, so we should be able to trust its predictions.
 
 ## Posterior predictions
 
