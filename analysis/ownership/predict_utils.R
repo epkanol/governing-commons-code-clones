@@ -102,10 +102,10 @@ histogram_per_team <- function(postpredict) {
   return (p)
 }
 
-onepred <- function(added=q99(data$ADD), removed=q99(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP), 
+onepred <- function(model=m, added=q99(data$ADD), removed=q99(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP), 
                     teams=c("Arch", "Blue", "Brown","Red", "Green", "Yellow", "Orange", "NewTeam"), 
                     repos=c("Venus", "Jupiter", "IntTest", "Mars", "Neptune", "Saturn", "Uranus", "Mercury")) {
-  pred <- predict_for_team(m, teams, repo=repos, added, removed, complexity, duplicates)
+  pred <- predict_for_team(model, teams, repo=repos, added, removed, complexity, duplicates)
   # assumes we know that total number of n is 10000 (hence the n/100) - should really calculate this instead...
   p0 <- pred |> group_by(added, removed, complexity, duplicates, team, repo, .prediction) |> summarize(n = n()) |> filter(.prediction == 0) |> summarize(pred0=100-(n/100)) |> ungroup() |> group_by(repo) |> mutate(rank0 = rank(pred0, ties.method = "min"))
   p5 <- pred |> group_by(added, removed, complexity, duplicates, team, repo, .prediction) |> summarize(n = n()) |> filter(.prediction < 6 ) |> summarize(pred5=100-(sum(n)/100)) |> ungroup() |> group_by(repo) |> mutate(rank5 = rank(pred5, ties.method = "min"))

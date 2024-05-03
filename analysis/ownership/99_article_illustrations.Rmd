@@ -1,0 +1,326 @@
+---
+title: "99 Article Illustrations"
+author: "Anders Sundelin"
+date: "2024-04-05"
+output: html_document
+params: 
+    cache: "../.cache"
+    output: "../ownership/output"
+    reloo: FALSE
+    cores: 2
+    threads: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(dplyr)
+library(bayesplot)
+library(brms)
+library(patchwork)
+library(cowplot)
+library(ggpubr)
+library(tidybayes)
+library(dagitty)
+library(ggdag)
+options(dplyr.summarise.inform = FALSE)
+```
+
+## Collecting illustrations and data for the article
+
+This Rmd collects all the illustrations and data tables used in the article "".
+If you use a separate cache directory (not the one bundled with this repository), you first need to run the previous Rmd files (01_, 02_, 03_...), which is why this file is named 99_article_illustrations.
+
+
+```{r validate-params}
+stopifnot(dir.exists(params$cache))
+stopifnot(dir.exists(params$output))
+```
+
+```{r ingest-data}
+set.seed(12345)
+source("ingest_data.R")
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+```
+
+```{r ingest-models}
+M0_file <- "added-M_intercepts_only.rds"
+M1_file <- "added-M_added_removed_lines.rds"
+M2_file <- "added-M_pop_A_team_team_repo_RDC_zi_sd025_gamma05.rds"
+
+MODELS <- c(cachefile(M0_file), cachefile(M1_file), cachefile(M2_file))
+lapply(MODELS, function(m) { print(m); stopifnot(file.exists(m)) } )
+
+reloo_M0_f <- cachefile(paste0("reloo-", M0_file))
+reloo_M1_f <- cachefile(paste0("reloo-", M1_file))
+reloo_M2_f <- cachefile(paste0("reloo-", M2_file))
+RELOO <- c(reloo_M0_f, reloo_M1_f, reloo_M2_f)
+lapply(RELOO, function(m) { print(m); stopifnot(file.exists(m)) } )
+
+reloo_M0 <- readRDS(reloo_M0_f)
+reloo_M1 <- readRDS(reloo_M1_f)
+reloo_M2 <- readRDS(reloo_M2_f)
+
+ppc_M2_f <- cachefile(paste0("ppc-", M2_file))
+stopifnot(file.exists(ppc_M2_f))
+ppc_M2 <- readRDS(ppc_M2_f)
+
+M0 <- readRDS(cachefile(M0_file))
+M1 <- readRDS(cachefile(M1_file))
+M2 <- readRDS(cachefile(M2_file))
+```
+
+```{r loo}
+loo_M0 <- loo(M0)
+loo_M1 <- loo(M1)
+loo_M2 <- loo(M2)
+loo_compare(loo_M0, loo_M1, loo_M2)
+```
+
+These are the comparisons for the LOO (approximated PSIS) comparison
+
+
+## Table 2
+
+When we have performed the reloo (recomputed the exact, not approximated, LOO-CV once for each problematic observation), we get similar, but more exact numbers.
+We report these, more exact comparisons, in the paper.
+
+```{r}
+loo_compare(list(M0=reloo_M0, M1=reloo_M1, M2=reloo_M2))
+```
+
+
+## Figure 1 - Causal DAG
+
+```{r causal-dag}
+coords <- data.frame(name=c("TEAM", "KNOW", "CLEAN", "DUP", "COMP", "ADD", "REM", "INTR"), 
+                     x=c(        0,    0.2,     0.4,   0.4,   0.35,   0.55,   0.38, 1.0),
+                     y=c(    -0.03,    0.2,   -0.08,   0.2,   0.03,   0.07,   -0.2, 0))
+dagified <- dagify( INTR ~ REM + COMP + ADD + DUP + TEAM, 
+                    COMP ~ TEAM + DUP,
+                    REM ~ TEAM + CLEAN,
+                    ADD ~ COMP + CLEAN + KNOW + DUP,
+                    DUP ~ TEAM,
+                    CLEAN ~ TEAM,
+                    KNOW ~ TEAM + DUP + COMP,
+                    exposure = "TEAM",
+                    outcome = "INTR",
+                    latent = c("CLEAN", "KNOW"),
+                    coords=coords)
+(p <- ggdag_status(dagified) + theme_dag() + theme(legend.position="bottom") + guides(color = guide_legend(override.aes = list(size = 2), title=NULL, direction="horizontal", nrow = 1)) 
+)
+```
+```{r}
+figsave("99-causal-dag.pdf", p)
+```
+
+## Figure 2 - Prior Predictive Checks
+
+Plotting the 95th percentile of prior predictions, versus the 99th. The scales are different on the x and y axes, as it is more likely to find extreme values at the higher percentiles.
+
+```{r prior_predict}
+yrep <- posterior_predict(ppc_M2) # predicting with other data points are supported via the newdata argument
+```
+
+```{r ppc_2d}
+(p <- ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + theme(legend.position="bottom") #+ ggtitle("Prior predicted Q95 vs Q99")
+)
+```
+```{r}
+figsave("99-prior_predictive_q95_vs_q99.pdf", p)
+```
+
+
+## Figure 3 - Rootogram
+
+Rootogram, full scale
+
+```{r rootogram}
+(rootogram <- pp_check(M2, type = "rootogram", style="suspended")
+)
+```
+
+Rootogram, sized according to reasonable (observed) values.
+
+```{r}
+rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
+```
+
+```{r}
+topleft=data.frame(x=c(0, 0),
+                   xend=c(17, 17), 
+                   y=c(35, -4),
+                   yend=c(22, 17))
+main.plot <- rootogram + scale_x_continuous(limits = c(0,50), breaks = seq(from=0, to=50, by=5)) + scale_y_continuous(limits = c(-4,35), breaks = c(-5, 0, 5, 10, 15, 20, 25, 30, 35)) + geom_text(x=1, y=35, label="b)") + theme(legend.position="bottom")
+inset.plot <- rootogram + theme(legend.position = "none") + scale_x_continuous(limits = c(0,150))  + geom_text(x=20, y=150, label="a)") + geom_rect(xmin=-3, xmax=50, ymin=-4, ymax=35, color="red", fill=NA)
+(p <- ggdraw() + draw_plot(main.plot) + draw_plot(inset.plot, x=0.25, y=.5, width = 0.5, height = 0.5)
+)
+```
+```{r}
+figsave("99-rootogram.pdf", p)
+```
+
+## Figure 4 - Posterior proportion of zeros
+
+```{r posterior_predict}
+yrep <- posterior_predict(M2)
+```
+
+```{r posterior_zeros}
+(p <- ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0))
+)
+```
+```{r}
+figsave("99-posterior_prop_zeros.pdf", p)
+```
+
+## Figure 6 - Observed proportion of file changes
+
+As we do not know to which team the Unknown authors belong, they are excluded from the plot.
+In all likelihood, the 
+
+```{r observed-prop-dup}
+changesPerRepoAndTeam <- data |> group_by(repo, committerteam) |> summarise(fileschanged=n())
+zerosPerRepoAndTeam <- data |> filter(INTROD == 0) |> group_by(repo, committerteam) |> summarise(zeros=n())
+zeros_ratio <- merge(changesPerRepoAndTeam, zerosPerRepoAndTeam) |> mutate(introdRatio = 1-(zeros/fileschanged)) |> arrange(introdRatio)
+
+(p <- zeros_ratio |> filter(committerteam != "Unknown") |> ggplot(aes(x=committerteam, y=introdRatio, color=committerteam, size=fileschanged)) + geom_point() + facet_wrap(~ repo) + xlab("team") + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + scale_y_continuous(limits=c(0,0.27)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+)
+```
+```{r}
+figsave("99-observed_proportion_dup_per_repo_team.pdf", p)
+```
+
+## Figure 7 - OCAM metrics for Jupiter and Uranus repositories
+
+```{r ocam-jupiter-uranus}
+(ocam_plot <- ocam_rank_repo(ocam_metrics(data) |> filter(repo %in% c(JUPITER, URANUS))) + theme_bw() + theme(legend.position = "none") + ylab(NULL)
+)
+```
+```{r}
+figsave("99-ocam_jupiter_uranus.pdf", ocam_plot)
+```
+
+```{r}
+source("predict_utils.R")
+```
+
+## Figure 8 - Number of changes that introduce particular number of clones in Jupiter for four teams
+
+Observed number of changes that introduce a particular number of duplicate
+
+```{r duplicates-histogram}
+plot_introd_issues_in_repo <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=INTROD, color=team, fill=team)) + geom_histogram(binwidth = 1) + facet_wrap(~ team) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("number of changed files") + xlab("Number of duplicates introduced in the change") + ylim(0,65)
+}
+(p <- plot_introd_issues_in_repo(JUPITER, function(x) x %in% c(RED, BLUE, GREEN, ARCH)) + theme_bw() + theme(legend.position = "bottom"))
+```
+```{r}
+figsave("99-observed-INTROD-4teams-Jupiter.pdf", p)
+```
+
+## Figure 9 - Posterior predicted 99th percentile per team
+
+Note that we already calculated yrep (from M2) above, so we'll just reuse it here.
+
+```{r posterior_q99_by_team}
+(p <- ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quartile per team")
+)
+```
+```{r}
+figsave("99-posterior-q99-teams.pdf", p)
+```
+
+The 99th percentile value predictions seem very well fitted. Predictions surround the observation nicely.
+
+## Figure 10 - Probability of one or more duplicates for a large change in a complex file
+
+```{r}
+duplicates_probability <- function(predictions) {
+  params = predictions |> select(added, removed, complexity, duplicates) |> distinct()
+  stopifnot(length(params$added) == 1)
+  predictions |> ggplot(aes(x=team, y=pred0/100, color=team)) + geom_boxplot() + facet_wrap(~ repo) + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + ggtitle("Probability of any duplicate per team and repository", paste("added", params$added, "removed", params$removed, "complexity", params$complexity, "duplicates", params$duplicates)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("P(INTROD > 0)")
+}
+
+more_five_probability <- function(predictions) {
+  params = predictions |> select(added, removed, complexity, duplicates) |> distinct()
+  stopifnot(length(params$added) == 1)
+  predictions |> ggplot(aes(x=team, y=pred5/100, color=team)) + geom_boxplot() + facet_wrap(~ repo) + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + ggtitle("Probability of more than five duplicates per team and repository", paste("added", params$added, "removed", params$removed, "complexity", params$complexity, "duplicates", params$duplicates)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("P(INTROD > 5)")
+}
+```
+
+```{r}
+pred <- onepred(model=M2, added=q99(data$ADD), removed=q99(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP))
+(p <- duplicates_probability(pred) + ggtitle(label=NULL, subtitle=NULL) + scale_y_continuous(limits=c(0,1), breaks=c(0, 0.2, 0.4, 0.6, 0.8, 1.0)))
+```
+```{r}
+figsave("99-prob_duplicates_large_complex_change.pdf", p)
+```
+
+```{r}
+source("conditional_effects.R")
+```
+
+## Figure 11 - Comparing Blue&Red in Jupiter&Uranus
+
+```{r red-jupiter}
+(red_jupiter_plot <- plot_logCOMPLEX_by_logDUP_median_q99(M2, d, condeffect_logCOMPLEX_by_logDUP_median_q99(M2, d, RED, JUPITER, added=q95(data$ADD), removed=q95(data$DEL)), RED, JUPITER) + 
+   scale_color_manual(values=c(Q50=rgb(166,97,26, maxColorValue = 255),Q99=rgb(1, 133, 113, maxColorValue = 255))) + 
+   labs(title=NULL, subtitle=NULL, legend=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + theme_bw() +  scale_y_continuous(limits=c(0,25))
+)
+```
+```{r red-uranus}
+(red_uranus_plot <- plot_logCOMPLEX_by_logDUP_median_q99(M2, d, condeffect_logCOMPLEX_by_logDUP_median_q99(M2, d, RED, URANUS, added=q95(data$ADD), removed=q95(data$DEL)), RED, URANUS) + labs(title=NULL, subtitle=NULL) +
+   scale_color_manual(values=c(Q50=rgb(166,97,26, maxColorValue = 255),Q99=rgb(1, 133, 113, maxColorValue = 255))) +
+   scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + theme_bw() + ylab(NULL) + scale_y_continuous(limits=c(0,25))
+)
+```
+```{r blue-jupiter}
+(blue_jupiter_plot <- plot_logCOMPLEX_by_logDUP_median_q99(M2, d, condeffect_logCOMPLEX_by_logDUP_median_q99(M2, d, BLUE, JUPITER, added=q95(data$ADD), removed=q95(data$DEL)), BLUE, JUPITER) + labs(title=NULL, subtitle=NULL) + 
+   scale_color_manual(values=c(Q50=rgb(166,97,26, maxColorValue = 255),Q99=rgb(1, 133, 113, maxColorValue = 255))) + 
+   scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + scale_y_continuous(limits=c(0,80)) + theme(legend.position = "none") + theme_bw()
+)
+```
+```{r blue-uranus}
+(blue_uranus_plot <- plot_logCOMPLEX_by_logDUP_median_q99(M2, d, condeffect_logCOMPLEX_by_logDUP_median_q99(M2, d, BLUE, URANUS, added=q95(data$ADD), removed=q95(data$DEL)), BLUE, URANUS) + labs(title=NULL, subtitle=NULL) +
+   scale_color_manual(values=c(Q50=rgb(166,97,26, maxColorValue = 255),Q99=rgb(1, 133, 113, maxColorValue = 255))) + 
+   scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + scale_y_continuous(limits=c(0,80)) + ylab(NULL) + theme_bw()
+)
+(complexity_plot <- ggarrange(plotlist = list(blue_jupiter_plot, blue_uranus_plot, red_jupiter_plot, red_uranus_plot), labels="AUTO", nrow=2, ncol=2, common.legend = T, legend="bottom") 
+ ) 
+```
+```{r}
+figsave("99-blue_red_complexity.pdf", complexity_plot)
+```
+
+## Figure 12 - Probability of clones
+
+```{r}
+(median_plot <- plot_cumulative_prob_of_duplicates(predict_for_team(M2, c(ARCH, BLUE, RED, NEWTEAM, GREEN), repo=c(URANUS, JUPITER, INTTEST, MARS), added=q95(data$ADD), removed=q95(data$DEL), duplicates=median(data$DUP), complex=median(data$COMPLEX))) + scale_y_continuous(limits = c(0.25,1.0)) + scale_x_continuous(limits = c(0,30))+ ggtitle(label=NULL, subtitle=NULL) + theme(legend.position = "bottom") + ylab("cumulative probability") + xlab("Max number of introduced clones")
+)
+
+(q95_plot <- plot_cumulative_prob_of_duplicates(predict_for_team(M2, c(ARCH, BLUE, RED, NEWTEAM, GREEN), repo=c(URANUS, JUPITER, INTTEST, MARS), added=q95(data$ADD), removed=q95(data$DEL), duplicates=q95(data$DUP), complex=q95(data$COMPLEX))) + scale_y_continuous(limits = c(0.25,1.0)) + scale_x_continuous(limits = c(0,30))+ ggtitle(label=NULL, subtitle=NULL) + theme(legend.position = "none") + ylab(NULL)  + xlab("Max number of introduced clones")
+)
+
+(prow <- plot_grid(median_plot + theme(legend.position = "none"), q95_plot, align = "hv", labels=c("a)", "b)"), hjust=-1, nrow=1))
+
+legend <- get_legend(median_plot) 
+
+(p <- plot_grid(prow, legend, ncol=1, rel_heights = c(1,.05))
+)
+```
+```{r}
+figsave("99-predicted_median_vs_q95.pdf", p)
+```
+
+## Figure 13 - Removals
+
+To be done

@@ -169,6 +169,20 @@
       ],
       "Hash": "5ea2700d21e038ace58269ecdbeb9ec0"
     },
+    "RcppArmadillo": {
+      "Package": "RcppArmadillo",
+      "Version": "0.12.8.2.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "Rcpp",
+        "methods",
+        "stats",
+        "utils"
+      ],
+      "Hash": "85c0c4491c06db4814ed7e39b960973c"
+    },
     "RcppEigen": {
       "Package": "RcppEigen",
       "Version": "0.3.4.0.0",
@@ -217,6 +231,19 @@
         "RcppParallel"
       ],
       "Hash": "2286252ee7b8ee96e6d7f248ba65bb1f"
+    },
+    "V8": {
+      "Package": "V8",
+      "Version": "4.4.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp",
+        "curl",
+        "jsonlite",
+        "utils"
+      ],
+      "Hash": "ca98390ad1cef2a5a609597b49d3d042"
     },
     "abind": {
       "Package": "abind",
@@ -713,6 +740,25 @@
       ],
       "Hash": "411ca2c03b1ce5f548345d2fc2685f7a"
     },
+    "dagitty": {
+      "Package": "dagitty",
+      "Version": "0.3-4",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "MASS",
+        "R",
+        "V8",
+        "boot",
+        "grDevices",
+        "graphics",
+        "jsonlite",
+        "methods",
+        "stats",
+        "utils"
+      ],
+      "Hash": "dfbd13468fb3d6747b4d9541a648df9d"
+    },
     "data.table": {
       "Package": "data.table",
       "Version": "1.15.2",
@@ -999,6 +1045,30 @@
       ],
       "Hash": "15e9634c0fcd294799e9b2e929ed1b86"
     },
+    "ggdag": {
+      "Package": "ggdag",
+      "Version": "0.2.12",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "dagitty",
+        "dplyr",
+        "forcats",
+        "ggplot2",
+        "ggraph",
+        "ggrepel",
+        "igraph",
+        "magrittr",
+        "pillar",
+        "purrr",
+        "rlang",
+        "stringr",
+        "tibble",
+        "tidygraph"
+      ],
+      "Hash": "813c29e1d0737f3fda24876fd2dd8d72"
+    },
     "ggdist": {
       "Package": "ggdist",
       "Version": "3.3.2",
@@ -1022,6 +1092,35 @@
         "withr"
       ],
       "Hash": "86ebb3543cdad6520be9bf8863167a9a"
+    },
+    "ggforce": {
+      "Package": "ggforce",
+      "Version": "0.4.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "MASS",
+        "R",
+        "Rcpp",
+        "RcppEigen",
+        "cli",
+        "ggplot2",
+        "grDevices",
+        "grid",
+        "gtable",
+        "lifecycle",
+        "polyclip",
+        "rlang",
+        "scales",
+        "stats",
+        "systemfonts",
+        "tidyselect",
+        "tweenr",
+        "utils",
+        "vctrs",
+        "withr"
+      ],
+      "Hash": "384b388bd9155468d2c851846ee69f9f"
     },
     "ggplot2": {
       "Package": "ggplot2",
@@ -1076,6 +1175,36 @@
         "utils"
       ],
       "Hash": "c957612b8bb1ee9ab7b2450d26663e7e"
+    },
+    "ggraph": {
+      "Package": "ggraph",
+      "Version": "2.2.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "MASS",
+        "R",
+        "cli",
+        "cpp11",
+        "dplyr",
+        "ggforce",
+        "ggplot2",
+        "ggrepel",
+        "graphlayouts",
+        "grid",
+        "igraph",
+        "lifecycle",
+        "memoise",
+        "rlang",
+        "scales",
+        "stats",
+        "tidygraph",
+        "utils",
+        "vctrs",
+        "viridis",
+        "withr"
+      ],
+      "Hash": "1f5d21a9e1f84b4a81ddacb8f052ca61"
     },
     "ggrepel": {
       "Package": "ggrepel",
@@ -1227,6 +1356,19 @@
         "withr"
       ],
       "Hash": "d6db1667059d027da730decdc214b959"
+    },
+    "graphlayouts": {
+      "Package": "graphlayouts",
+      "Version": "1.1.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "Rcpp",
+        "RcppArmadillo",
+        "igraph"
+      ],
+      "Hash": "d329345a6a37666ca3f18f3b3c1347b7"
     },
     "gridExtra": {
       "Package": "gridExtra",
@@ -1926,6 +2068,16 @@
         "Rcpp"
       ],
       "Hash": "6b8177fd19982f0020743fadbfdbd933"
+    },
+    "polyclip": {
+      "Package": "polyclip",
+      "Version": "1.10-6",
+      "Source": "Repository",
+      "Repository": "RSPM",
+      "Requirements": [
+        "R"
+      ],
+      "Hash": "436542aadb70675e361cf359285af7c7"
     },
     "polynom": {
       "Package": "polynom",
@@ -2656,6 +2808,29 @@
       ],
       "Hash": "3853596458d8b9c81f7b39ee920c5319"
     },
+    "tidygraph": {
+      "Package": "tidygraph",
+      "Version": "1.3.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R6",
+        "cli",
+        "cpp11",
+        "dplyr",
+        "igraph",
+        "lifecycle",
+        "magrittr",
+        "pillar",
+        "rlang",
+        "stats",
+        "tibble",
+        "tidyr",
+        "tools",
+        "utils"
+      ],
+      "Hash": "2149824d406f233b57b087be72c5f163"
+    },
     "tidyr": {
       "Package": "tidyr",
       "Version": "1.3.1",
@@ -2756,6 +2931,21 @@
       ],
       "Hash": "be7a76845222ad20adb761f462eed3ea"
     },
+    "tweenr": {
+      "Package": "tweenr",
+      "Version": "2.0.3",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "cpp11",
+        "farver",
+        "magrittr",
+        "rlang",
+        "vctrs"
+      ],
+      "Hash": "82fac2b73e6a1f3874fc000aaf96d8bc"
+    },
     "tzdb": {
       "Package": "tzdb",
       "Version": "0.4.0",
@@ -2800,6 +2990,19 @@
         "rlang"
       ],
       "Hash": "c03fa420630029418f7e6da3667aac4a"
+    },
+    "viridis": {
+      "Package": "viridis",
+      "Version": "0.6.5",
+      "Source": "Repository",
+      "Repository": "RSPM",
+      "Requirements": [
+        "R",
+        "ggplot2",
+        "gridExtra",
+        "viridisLite"
+      ],
+      "Hash": "acd96d9fa70adeea4a5a1150609b9745"
     },
     "viridisLite": {
       "Package": "viridisLite",
