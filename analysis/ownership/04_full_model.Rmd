@@ -25,6 +25,52 @@ library(ggpubr)
 library(tidybayes)
 options(dplyr.summarise.inform = FALSE)
 ```
+## Exploring how code duplicates are introduced by certain teams
+
+Models are cached in subdirectory, as they take considerable time to run.
+Expect multiple hours for the complete, multi-level model with all the data set.
+You might need to remove the cached models when changing some parameters (though formula or data changes are usually detected by brms).
+
+We move away from zero-based scaling, instead opting for scaling the logarithm of the severely right-skewed values (added, removed, complexity, duplicated lines).
+We are also heeding the advice of Gelman: https://statmodeling.stat.columbia.edu/2019/08/21/you-should-usually-log-transform-your-positive-data/
+This also means that the linear model will be based on the _magnitude_ of the change in parameter (e.g. 0, 1, 2.7, 7.3, 19.8 added lines/existing complexity). So each individual line will have marginally lower impact, but the scale of the parameter will still matter.
+
+A simple scientific model, where rates of change is taken from the population only, and the intercept varies per group becomes:
+
+$log(\lambda) = \beta_{0,i} + \beta_A A_i + \beta_C C_i + \beta_D D_i$
+
+where
+
+$A_i = \frac{ln(added_i+1) - \hat{\mu_{\alpha}}}{\hat{\sigma_{\alpha}}}$
+
+and
+$\hat{\mu_{\alpha}} = mean(ln(added+1))$
+$\hat{\sigma_{\alpha}} = stddev(ln(added+1))$
+
+$C_i = \frac{ln(complexity_i+1) - \hat{\mu_{\gamma}}}{\hat{\sigma_{\gamma}}}$
+
+and
+$\hat{\mu_{\gamma}} = mean(ln(complexity+1))$
+
+$\hat{\sigma_{\gamma}} = stddev(ln(complexity+1))$
+
+and
+$D_i = \frac{ln(dupblocks_i+1) - \hat{\mu_{\delta}}}{\hat{\sigma_{\delta}}}$
+
+and
+$\hat{\mu_{\delta}} = mean(ln(dupblocks+1))$
+
+$\hat{\sigma_{\delta}} = stddev(ln(dupblocks+1))$
+
+This corresponds to the following multiplicative model for $\lambda$ (also called $\mu$ in the negative binomial context):
+
+$\lambda_i = e^{\beta_{0,i}} (\frac{added_i+1}{e^\hat{\mu_\alpha}})^{\frac{\beta_A}{\hat{\sigma_\alpha}}} (\frac{complexity_i+1}{e^\hat{\mu_\gamma}})^{\frac{\beta_C}{\hat{\sigma_\gamma}}} (\frac{duplicates_i+1}{e^\hat{\mu_\delta}})^{\frac{\beta_D}{\hat{\sigma_\delta}}}$
+
+In this equation, $added$, $complexity$ and $duplicates$ are on their natural scale, starting at 0 and counting upwards.
+
+Depending on which parameters we include in the group-level effect, the exponent will change accordingly (hence the $i$ in $\beta_{0,i}$ for the model where only the intercept changes per team and repo).
+The other parameters, $\hat{\mu_\alpha}$ and $\hat{\sigma_\alpha}$, et al. are just normalizing constants, defined as the mean and standard deviation of the logarithm of the corresponding metric count.
+
 
 ```{r}
 set.seed(12345)
