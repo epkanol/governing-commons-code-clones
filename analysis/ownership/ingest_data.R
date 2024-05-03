@@ -116,9 +116,9 @@ data <- data_logscaled |> mutate(A = scale(logADD)[,1],
 
 # adapt these to fit your machine and willingness to wait for results. Models are cached, you might need to remove the cache in order to rebuild if these values are changed.
 CHAINS <- 4
-CORES <- 2
+CORES <- params$cores
 ITERATIONS <- 4000
-THREADS <- 4
+THREADS <- params$threads
 ADAPT_DELTA <- 0.95
 SAVE_PARS <- save_pars(all = FALSE)
 
