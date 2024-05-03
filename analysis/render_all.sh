@@ -2,6 +2,8 @@
 #
 # Override the CACHE environment variable if you do not want to use the embedded cached models.
 : "${CACHE:=../.cache}"
+# Set RELOO environment to TRUE if you want to run reloo (but beware that this will take days, if you run all models with RELOO=TRUE)
+: "${RELOO:=FALSE}"
 
 SOURCE=analysis
 OUTPUT=ownership/output
@@ -22,6 +24,6 @@ See README.md for details on how to specify this.
 
 for f in ${SOURCE}/${PREFIX}*.Rmd; do
     echo "============> Starting to generate file ${f} at:" $(date -Iseconds)
-    R -e "rmarkdown::render(\"${f}\", params=list(cache=\"${CACHE}\"), output_dir=\"${OUTPUT}\")" || echo "FAILED - please check your environment or settings"
+    R -e "rmarkdown::render(\"${f}\", params=list(cache=\"${CACHE}\", reloo=${RELOO}), output_dir=\"${OUTPUT}\")" || echo "FAILED - please check your environment or settings"
     echo "============> Finished file ${f} at:" $(date -Iseconds)
 done

@@ -235,7 +235,7 @@ mcmc_plot(m, type="neff_hist")
 
 Both MCMC chains, Rhat and Neff ratio looks good.
 
-```{r loo_plot}
+```{r plot_loo}
 loo <- loo(m)
 loo
 plot(loo)
@@ -249,7 +249,7 @@ Most likely due to sparse data for some observations.
 If these calculations produce reasonable Pareto values (< 0.7), then we can still trust the results.
 Reloo is disabled by default, but could be enabled by changing the `eval` value of the cell
 
-```{r, eval=param$reloo}
+```{r reloo, eval=params$reloo}
 Sys.time()
 (reloo <- reloo(m, loo, chains=CHAINS, cores=CORES)
 )

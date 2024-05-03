@@ -1,0 +1,899 @@
+---
+title: "04 Full Model with grouped intercept, R, D and C"
+author: "Anders Sundelin"
+date: "2023-03-19"
+output: html_document
+params: 
+    cache: "../.cache"
+    output: "../ownership/output"
+    reloo: FALSE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(dplyr)
+library(bayesplot)
+library(brms)
+library(patchwork)
+library(cowplot)
+library(ggpubr)
+library(tidybayes)
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r}
+set.seed(12345)
+source("ingest_data.R")
+MODEL_CACHE <- "added-M_pop_A_team_team_repo_RDC_zi_sd025_gamma05"
+```
+
+# Settings
+Models are stored in the following directory, which must exist prior to knitting this document:
+
+```{r}
+cat(normalizePath(paste(getwd(), dirname(cachefile(MODEL_CACHE)), sep="/"), mustWork = T))
+```
+
+The used cache directory can be controlled via the cache parameter to Rmd - it can be useful to experiment with this parameter if you Knit the document manually in RStudio.
+
+# Variation between teams, and between teams and repos
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(y ~ 1 + A + R + C + D + (1 + R + C + D | team) + (1 + R + C + D | team:repo),
+              zi ~ 1 + A + R + C + D + (1 + R + C + D | team) + (1 + R + C + D | team:repo))
+get_prior(data=d,
+          family=zero_inflated_negbinomial,
+          formula=formula)
+```
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.25), class = b),
+            prior(weibull(2, 0.25), class = sd),
+            prior(weibull(2, 0.25), class = sd, group=team:repo),
+            prior(lkj(2), class = cor),
+            prior(normal(0, 0.5), class = Intercept, dpar=zi),
+            prior(normal(0, 0.25), class = b, dpar=zi),
+            prior(weibull(2, 0.25), class = sd, dpar=zi),
+            prior(weibull(2, 0.25), class = sd, group=team:repo, dpar=zi),
+            prior(gamma(0.5, 0.1), class = shape))
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=zero_inflated_negbinomial)
+)
+```
+
+```{r brms-ppc}
+M_ppc <- brm(data = d,
+      family = zero_inflated_negbinomial,
+      formula = formula,
+      prior = priors,
+      file = cachefile(paste0("ppc-",MODEL_CACHE)),
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      sample_prior = "only",
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+m <- M_ppc
+```
+
+```{r prior_predict}
+yrep <- posterior_predict(m, newdata = d) # or nd
+```
+
+### Number of zeros
+
+```{r ppc_zeros}
+ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0)) + ggtitle("Prior predicted proportion of zeros")
+```
+
+### Max predicted value
+
+We had to adapt our priors quite significantly to get some realistic estimates.
+
+```{r ppc_max}
+(sim_max <- ppc_stat(y = d$y, yrep, stat = "max") + ggtitle("Prior predicted max values")
+)
+```
+
+Scaling to more reasonable values
+
+```{r}
+sim_max + scale_x_continuous(limits = c(0,1000)) + ggtitle("Prior predicted max values up to 1000")
+```
+
+
+### 99th percentile
+
+The 99th percentile is a more stable metric than the maximum value for highly right-skewed data like ours.
+The priors do a good job of matching the observations.
+
+```{r ppc_q99}
+ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Prior predicted Q99 vs. observed value")
+```
+
+### 99th vs 95th percentile
+
+We can even plot the 95th percentile versus the 99th, just to show how the spread of likely values vary.
+
+```{r ppc_2d}
+p <- ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + theme(legend.position="bottom") #+ ggtitle("Prior predicted Q95 vs Q99")
+p
+```
+
+### Standard deviation
+
+The standard deviation of the predictions is a bit harder to grasp intuitively.
+But our prior information encompass the observed value well.
+
+```{r ppc_sd}
+(p <- ppc_stat(y = d$y, yrep, stat = "sd") + ggtitle("Prior predicted stddev vs. observed value")
+)
+```
+
+Zooming in to show the distribution in more detail.
+Relative to the intercept model, this model has a slightly wider standard deviation range.
+
+```{r}
+p + scale_x_continuous(limits=c(0,30))
+```
+
+### Group-level predictions
+
+We can use groups present in the data to show how predictions stack up to observations made per group.
+Here, beside showing the distribution, it is also important to consider the scale on the respective $x$-axis.
+Teams with few, and varied, observations (such as UI and Unknown) are more reliant on the priors, and will have a larger range of predictions.
+
+
+```{r ppc_grouped_team}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per team")
+```
+
+Plotting prior predictions per repo can show how our model compares relative to repo-level metrics.
+We see that Integration tests are a bit of an anomaly.
+Our model does not incorporate any repo-level group (only the team:repo-level grouping, that is, how each team behaves in a particular repo), so all predictions will follow the same distribution.
+Note how all $x$-axes are quite similar in scale (the difference comes from random variations, and differing number of data points arising from each reposiotory)
+
+```{r ppc_grouped_repo}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per repository")
+```
+
+## Model execution and diagnostics
+
+```{r model_execution}
+M_pop_A_team_team_repo_zi_sd025_model <-
+  brm(data = d,
+      family = zero_inflated_negbinomial,
+      file = cachefile(MODEL_CACHE),
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+
+```
+
+```{r loo}
+M_pop_A_team_team_repo_zi_sd025_model <- add_criterion(M_pop_A_team_team_repo_zi_sd025_model, "loo")
+```
+
+```{r}
+m <- M_pop_A_team_team_repo_zi_sd025_model
+```
+
+
+```{r mcmc-trace}
+p <- mcmc_trace(m)
+pars <- levels(p[["data"]][["parameter"]])
+plots <- seq(1, to=length(pars), by=12)
+lapply(plots, function(i) {
+  start <- i
+  end <- start+11
+  mcmc_trace(m, pars = na.omit(pars[start:end]))
+  })
+```
+
+```{r, rhat_neff}
+mcmc_plot(m, type="rhat")
+mcmc_plot(m, type="rhat_hist")
+mcmc_plot(m, type="neff")
+mcmc_plot(m, type="neff_hist")
+```
+
+```{r plot_loo}
+loo <- loo(m)
+loo
+plot(loo)
+```
+
+Wider priors mean more outliers-13 with these priors...
+
+There are 11 outlier points that need to be analysed (e.g. with reloo)
+(7 over 0.7 and 4 over 1.0)
+
+```{r reloo, eval=params$reloo}
+Sys.time()
+(reloo <- reloo(m, loo, chains=CHAINS, cores=CORES)
+)
+Sys.time()
+saveRDS(reloo, cachefile(paste0("reloo-", MODEL_CACHE, ".rds")))
+```
+```{r plot_reloo, eval=params$reloo}
+# plotting the recalculated values
+plot(reloo)
+# which points have higher pareto_k than 0.5?
+influencers <- data[loo::pareto_k_ids(reloo),]
+influencers |> group_by(repo,committerteam) |> tally()
+```
+
+
+## Posterior predictive checks
+
+```{r posterior_predict}
+yrep <- posterior_predict(m)
+```
+
+### Posterior proportion of zeros
+
+```{r posterior_zeros}
+ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0))
+```
+
+The distribution of zeros are spot-on.
+
+### Posterior max value
+
+```{r posterior_max}
+(sim_max <- ppc_stat(y = d$y, yrep, stat = "max")
+)
+```
+
+```{r}
+sim_max + scale_x_continuous(limits = c(0,1000))
+```
+
+### Posterior standard distribution
+
+```{r posterior_sd}
+ppc_stat(y = d$y, yrep, stat = "sd")
+```
+
+### Posterior Q99
+
+```{r posterior_q99}
+ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Posterior predicted Q99")
+```
+
+### Posterior Q95 vs Q99
+
+```{r posterior_q95_vs_q99}
+ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + ggtitle("Posterior predicted Q95 vs Q99")
+```
+
+### Posterior grouped predictions
+
+```{r posterior_max_by_team}
+ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$team) + ggtitle("Posterior predictive max observation per team")
+```
+
+The max value per team varies between teams, but for most teams the observed value fall reasonably well within the predictions.
+Red team  is the exception.
+Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour will not be visible.
+
+```{r posterior_max_per_repo}
+ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$repo) + ggtitle("Posterior predictive max observation per repo")
+```
+
+Posterior max per repository have some variation, in particular in Saturn and Jupiter.
+
+```{r posterior_q99_by_team}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quartile per team")
+```
+
+The 99th percentile value predictions seem very well fitted. Predictions surround the observation nicely.
+
+```{r posterior_q99_by_repo}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posterior predictive 99% quartile per repo")
+```
+
+Rootogram, full scale
+
+```{r rootogram}
+(rootogram <- pp_check(m, type = "rootogram", style="suspended")
+)
+```
+
+Rootogram, sized according to reasonable (observed) values.
+
+```{r}
+rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
+```
+
+```{r rootogram}
+rootogram <- pp_check(m, type = "rootogram", style="suspended")
+rootogram
+```
+
+```{r}
+topleft=data.frame(x=c(0, 0),
+                   xend=c(17, 17), 
+                   y=c(35, -4),
+                   yend=c(22, 17))
+main.plot <- rootogram + scale_x_continuous(limits = c(0,50), breaks = seq(from=0, to=50, by=5)) + scale_y_continuous(limits = c(-4,35), breaks = c(-5, 0, 5, 10, 15, 20, 25, 30, 35)) + geom_text(x=1, y=35, label="b)") + theme(legend.position="bottom")
+inset.plot <- rootogram + theme(legend.position = "none") + scale_x_continuous(limits = c(0,150))  + geom_text(x=20, y=150, label="a)") + geom_rect(xmin=-3, xmax=50, ymin=-4, ymax=35, color="red", fill=NA)
+p <- ggdraw() + draw_plot(main.plot) + draw_plot(inset.plot, x=0.25, y=.5, width = 0.5, height = 0.5)
+p
+```
+
+
+## Posterior predictions
+
+The posterior predictions in general work well. Though the single outlier in Saturn is not picked up (as most other changes there yield very few duplicates). Though our priors does allow the outliers to shine though, they do relegate them as very unlikely (most max predictions are in the 10s or 20s, most).
+
+```{r}
+source("predict_utils.R")
+```
+
+```{r}
+p <- heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), complexity = mean(data$COMPLEX), duplicates = mean(data$DUP), summary = function(x) { length(which(x>0))/length(x) }), "Probability of introduced duplicates", decimals=2)
+p
+
+```
+
+```{r}
+p <- heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), complexity = q99(data$COMPLEX), duplicates = q99(data$DUP), summary = function(x) { length(which(x>0))/length(x) }), "Probability of introduced duplicates", decimals=2)
+p
+
+```
+
+```{r}
+p <- heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), complexity = median(data$COMPLEX), duplicates = median(data$DUP), summary = function(x) { length(which(x>0))/length(x) }), "Probability of introduced duplicates", decimals=2)
+p
+
+```
+
+
+```{r}
+p <- heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q99(data$ADD), removed=q99(data$DEL), complexity = quantile(data$COMPLEX, 0.25), duplicates = quantile(data$DUP, 0.25), summary = function(x) { length(which(x>0))/length(x) }), "Probability of introduced duplicates", decimals=2)
+p
+```
+
+
+```{r}
+p <- heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), summary = function(x) { length(which(x>0))/length(x) }), "Probability of introduced duplicates", decimals=2)
+p
+```
+
+```{r}
+heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), summary=function(x) q95(x)), "Quantile 95%", decimals=0)
+```
+
+```{r}
+heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), summary=function(x) q99(x)), "Quantile 99%", decimals=0)
+```
+
+```{r}
+heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), complexity=q95(data$COMPLEX), duplicates = q95(data$DUP), summary=function(x) q99(x)), "Quantile 99%", decimals=0)
+```
+
+```{r}
+heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q99(data$ADD), removed=q99(data$DEL), complexity=q99(data$COMPLEX), duplicates = q99(data$DUP), summary=function(x) quantile(x, 0.75)), "Quantile 75%", decimals=0)
+```
+
+```{r}
+heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=quantile(data$ADD, 0.99), removed=quantile(data$DEL, 0.1), complexity=mean(data$COMPLEX), duplicates = mean(data$DUP), summary=function(x) median(x)), "Median a posteriori", decimals=0)
+
+```
+
+```{r}
+summary(m)
+```
+
+```{r}
+source("conditional_effects.R")
+```
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Blue", "Jupiter", added=q95(data$ADD), removed=q95(data$DEL)), "Blue", "Jupiter")
+```
+
+```{r}
+(red_jupiter_plot <- plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Jupiter", added=q95(data$ADD), removed=q95(data$DEL)), "Red", "Jupiter") + labs(title=NULL, subtitle=NULL, legend=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + theme_bw() +  scale_y_continuous(limits=c(0,50))
+)
+```
+
+```{r}
+(red_uranus_plot <- plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Uranus", added=q95(data$ADD), removed=q95(data$DEL)), "Red", "Uranus") + labs(title=NULL, subtitle=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + theme_bw() + ylab(NULL) + scale_y_continuous(limits=c(0,50))
+)
+```
+
+```{r}
+(red_plot <- ggarrange(red_jupiter_plot, red_uranus_plot, common.legend = T, legend="bottom"))
+```
+```{r}
+figsave("red_jupiter_uranus.pdf", red_plot)
+```
+
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Green", "Jupiter", added=q99(data$ADD), removed=q95(data$DEL)), "Green", "Jupiter")
+```
+
+```{r}
+
+```
+```{r}
+(blue_jupiter_plot <- plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Blue", "Jupiter", added=q99(data$ADD), removed=q95(data$DEL)), "Blue", "Jupiter") + labs(title=NULL, subtitle=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + scale_y_continuous(limits=c(0,260)) + theme(legend.position = "none") + theme_bw()
+)
+```
+
+```{r}
+(blue_uranus_plot <- plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Blue", "Uranus", added=q99(data$ADD), removed=q95(data$DEL)), "Blue", "Uranus") + labs(title=NULL, subtitle=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + scale_y_continuous(limits=c(0,260)) + ylab(NULL) + theme_bw()
+)
+```
+```{r}
+(blue_plot <- ggarrange(blue_jupiter_plot, blue_uranus_plot, common.legend = T, legend="bottom"))
+```
+```{r}
+figsave("blue_jupiter_uranus.pdf", blue_plot)
+```
+
+```{r}
+(complexity_plot <- ggarrange(plotlist = list(blue_jupiter_plot, blue_uranus_plot, red_jupiter_plot, red_uranus_plot), labels="AUTO", nrow=2, ncol=2, common.legend = T, legend="bottom") 
+ ) 
+figsave("blue_red_complexity.pdf", complexity_plot)
+```
+
+
+
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Uranus", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Uranus") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+```
+
+```{r}
+(red_venus_plot <- plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Venus", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Venus") + labs(title=NULL, subtitle=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+)
+```
+
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Neptune", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Neptune") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+```
+
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Saturn", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Saturn") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+```
+
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "IntTest", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "IntTest") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+```
+
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Mars", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Mars") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+```
+```{r}
+plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Mercury", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Mercury") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
+```
+
+
+```{r}
+data |> filter(committerteam=="Blue", repo=="Uranus") |> group_by(INTROD) |> tally() |> arrange(desc(n))
+```
+```{r}
+data |> filter(committerteam=="Red", repo=="Jupiter") |> group_by(INTROD) |> tally() |> arrange(INTROD)
+data |> filter(committerteam=="Red", repo=="Venus") |> group_by(INTROD) |> tally() |> arrange(INTROD)
+data |> filter(committerteam=="Red", repo=="Uranus") |> group_by(INTROD) |> tally() |> arrange(INTROD)
+```
+```{r}
+data |> filter(committerteam=="Red", repo=="Venus") |> tally()
+
+data |> filter(committerteam=="Red", repo=="Venus") |> group_by(trunc(COMPLEX/5)) |> tally()
+```
+
+```{r}
+data |> filter(committerteam=="Red", repo=="Jupiter") |> tally()
+data |> filter(committerteam=="Red", repo=="Jupiter") |> group_by(trunc(COMPLEX/5)) |> tally()
+
+```
+```{r}
+data |> filter(committerteam=="Red") |> group_by(repo) |> tally() |> arrange(desc(n))
+
+```
+
+```{r}
+data |> filter(committerteam=="Blue", repo=="Venus") |> group_by(INTROD) |> tally() |> arrange(INTROD)
+data |> filter(committerteam=="Blue", repo=="Uranus") |> group_by(INTROD) |> tally() |> arrange(INTROD)
+
+```
+
+```{r}
+data |> filter(COMPLEX==max(COMPLEX))
+```
+
+
+```{r}
+teamBlue <- condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Jupiter")
+```
+```{r}
+teamArch <- condeffect_logADD_by_logCOMPLEX(m, d, "Arch", "Jupiter")
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, teamBlue)
+```
+```{r}
+library(forcats)
+reloo_plot_logADD_by_logCOMPLEX <- function(reloo, someData, ftot, aTeam, aRepo) {
+  tmp <- bind_cols(someData, reloo$diagnostics) |> mutate(
+    truncC=factor(trunc(unscale_complexity(round(C)))), 
+    added=unscale_added(A), 
+    complexity=factor(trunc(unscale_complexity(round(C)))))
+  sorted_labels <- paste(sort(as.integer(levels(tmp$truncC))))
+  tmp$truncC <- factor(tmp$truncC, levels = sorted_labels)
+  tmp$complexity <- factor(tmp$complexity, levels = sorted_labels)
+  
+  observed <- tmp |> filter(team == aTeam, repo == aRepo)
+  
+  tmp <- ftot |> mutate(added=unscale_added(A),
+                        complexity=factor(trunc(unscale_complexity(as.integer(C))), levels=trunc(unscale_complexity(C)))) 
+  predicted <- tmp
+  return(predicted |> ggplot(aes(x=added)) +
+    geom_smooth(aes(y=Estimate, ymin=Q5.5, ymax=Q94.5, group=complexity, color=complexity), stat="identity", alpha=.25, linewidth=.5) +
+    geom_point(data=observed, aes(y=y, size = pareto_k, color=truncC), alpha=0.2) +
+      ggtitle(paste0("Conditional effects of team ", aTeam, " in repo ", aRepo))
+  )
+}
+# ! factor level [6] is duplicated
+#reloo_plot_logADD_by_logCOMPLEX(reloo, d, teamBlue, "Blue", "Jupiter")
+```
+
+```{r}
+teamBlue |> mutate(added=unscale_added(A), complexity=factor(trunc(unscale_complexity(as.integer(C))))) |> select(complexity) |> summary()
+```
+
+
+```{r}
+d |> sample_n(10) |> select(y, A, C, team, repo) |> mutate(foo = trunc(unscale_complexity(round(C))))
+  #mutate(truncC=factor(trunc(unscale_complexity(round(C, 0)))), added=unscale_added(A), complexity=factor(trunc(unscale_complexity(round(C, 0))))) |> select(complexity) 
+```
+
+
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, teamArch)
+
+```
+```{r}
+teamBrown <- condeffect_logADD_by_logCOMPLEX(m, d, "Brown", "IntTest")
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, teamBrown)
+
+```
+
+```{r}
+teamUI <- condeffect_logADD_by_logCOMPLEX(m, d, "UI", "Jupiter")
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, teamUI)
+
+```
+
+```{r}
+(p <- mcmc_areas_ridges(m, regex_pars = c("^b_")) + theme_bw() + ggtitle("Population-level beta parameter distributions"))
+
+```
+
+
+
+```{r}
+(p <- mcmc_areas(m, regex_pars = c("^b_")) + theme_bw() + ggtitle("Population-level beta parameter distributions"))
+```
+```{r}
+figsave("pop_level_betas.pdf", p)
+```
+
+```{r}
+mcmc_areas(m, regex_pars = c("^sd_"))
+
+```
+
+```{r}
+mcmc_areas(m, regex_pars = c("^r_team[[].*,Intercept"))
+
+```
+
+```{r}
+mcmc_areas(m, regex_pars = c("^r_team.*[[]Red,.*[]]"))
+
+```
+
+```{r}
+mcmc_areas(m, regex_pars = c("^r_team:repo.*[[].*Red_IntTest,.*[]]"))
+
+```
+
+```{r}
+plot_logCOMPLEX_by_logADD(m, d, condeffect_logCOMPLEX_by_logADD(m, d, "Brown", "IntTest")) + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+```
+
+```{r}
+plot_logCOMPLEX_by_logADD(m, d, condeffect_logCOMPLEX_by_logADD(m, d, "Blue", "IntTest", robust=T)) + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+```
+
+```{r}
+plot_logCOMPLEX_by_logADD(m, d, condeffect_logCOMPLEX_by_logADD(m, d, "Red", "IntTest")) + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+```
+```{r}
+plot_logCOMPLEX_by_logADD(m, d, condeffect_logCOMPLEX_by_logADD(m, d, "Blue", "Neptune")) + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+```
+```{r}
+plot_logCOMPLEX_by_logADD(m, d, condeffect_logCOMPLEX_by_logADD(m, d, "Blue", "Uranus")) + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+```
+
+
+```{r}
+plot_logCOMPLEX_by_logADD(m, d, condeffect_logCOMPLEX_by_logADD(m, d, "Red", "Jupiter")) + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "IntTest", removed=200, duplicates=20)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Red", "IntTest", removed=200, duplicates=20)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Neptune", removed=200, duplicates=20)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+(p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Green", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,215))
+)
+```
+```{r}
+figsave("condeffect_added_vs_complex_green_jupiter.pdf", p)
+```
+```{r}
+(p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,250))
+)
+
+```
+
+```{r}
+(p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Red", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,250))
+)
+```
+```{r}
+figsave("condeffect_added_vs_complex_red_jupiter.pdf", p)
+```
+
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Jupiter", removed=200, duplicates=20)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) #+ scale_y_continuous(limits=c(0,175))
+```
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Red", "Jupiter", removed=200, duplicates=20)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))+ scale_y_continuous(limits=c(0,175))
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Blue", "Neptune", removed=200, complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) #+ scale_y_continuous(limits=c(0,175))
+```
+
+
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Red", "Neptune", removed=200, complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Blue", "Jupiter", removed=200, complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
+```
+
+```{r}
+jupiter_stats <- data |> filter(repo == "Jupiter") |> summarize(remQ95 = q95(DEL), compQ95 = q95(COMPLEX), remQ99 = q99(DEL), compQ99 = q99(COMPLEX))
+
+```
+
+
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Red", "Jupiter", removed=jupiter_stats$remQ95, complexity = jupiter_stats$compQ95)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Blue", "IntTest", removed=jupiter_stats$remQ95, complexity=jupiter_stats$compQ95)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + scale_y_continuous(limits = c(0,400))
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Red", "IntTest", removed=q95(data$DEL), complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
+```
+
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Brown", "IntTest")) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Newbies", "IntTest")) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "NewTeam", "Saturn")) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Red", "Saturn", removed=0, duplicates = 0)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Green", "Saturn", removed=q95(data$DUP), duplicates = q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Orange", "Venus", removed=0, duplicates = 0)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Yellow", "Venus", removed=0, duplicates=0)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Green", "Venus", removed=0, duplicates=0)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Brown", "Jupiter", removed=q95(data$DEL), complexity = q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+```
+
+```{r}
+plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Newbies", "Jupiter", removed=q95(data$DEL), complexity = q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
+
+```
+
+```{r}
+source("predict_utils.R")
+```
+
+Q95 change in a highly complex file
+
+```{r}
+(p <- plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Red", "NewTeam", "Green"), repo=c("Jupiter", "IntTest", "Aniara", "Venus"), added=q95(data$ADD), removed=q95(data$DEL), duplicates=q95(data$DUP), complex=q95(data$COMPLEX))) + scale_y_continuous(limits = c(0.25,1.0)) + scale_x_continuous(limits = c(0,30)) )
+```
+
+```{r}
+duplicates_probability_for_team <- function(predictions, aTeam) {
+  params = predictions |> select(added, removed, complexity, duplicates) |> distinct()
+  stopifnot(length(params$added) == 1)
+  predictions |> filter(team == aTeam) |> ggplot(aes(x=repo, y=pred0/100, color=team)) + geom_boxplot() + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + 
+    ggtitle(paste("Probability of any duplicate per repository for team", aTeam), 
+            paste("added", round(params$added, 0), "removed", round(params$removed, 0), "complexity", round(params$complexity, 0), "duplicates", round(params$duplicates, 0))) + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("P(INTROD > 0)") + scale_y_continuous(limits=c(0,1))
+}
+
+more_five_probability_for_team <- function(predictions, aTeam) {
+  params = predictions |> select(added, removed, complexity, duplicates) |> distinct()
+  stopifnot(length(params$added) == 1)
+  predictions |> filter(team == aTeam) |> ggplot(aes(x=repo, y=pred5/100, color=team)) + geom_boxplot() + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + 
+    ggtitle(paste("Probability of more than five duplicates per repository for team", aTeam), 
+            paste("added", round(params$added, 0), "removed", round(params$removed, 0), "complexity", round(params$complexity, 0), "duplicates", round(params$duplicates,0))) + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("P(INTROD > 5)") + scale_y_continuous(limits=c(0,1))
+}
+
+```
+
+```{r}
+pred <- onepred(added=q95(data$ADD), removed=q95(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP))
+(p <- duplicates_probability_for_team(pred, "Blue"))
+(p <- more_five_probability_for_team(pred, "Blue"))
+
+```
+
+Observed number of introduced duplicates.
+
+```{r}
+(p <- data |> filter(repo == MARS, committerteam == GREEN) |> ggplot(aes(x=DUP, y=COMPLEX, size=INTROD, color=INTROD)) + geom_point() + geom_jitter() + scale_y_continuous(breaks=c(0,1,2,5, 10, 25, 50, 75, 100, 250, 500, 750), trans="log1p") + scale_x_continuous(breaks=c(0,1,2,5, 10, 25, 50, 75, 100), trans="log1p") + scale_color_distiller(palette = "Spectral") + theme_bw()
+)
+```
+
+```{r}
+data |> filter(repo == MARS) |> group_by(committerteam) |> filter(INTROD == max(INTROD)) |> select(committerteam, INTROD, DUP) |> arrange(desc(INTROD))
+```
+
+
+```{r}
+(p <- data |> filter(repo == MARS, committerteam == GREEN) |> group_by(INTROD) |> ggplot(aes(x=DUP, group=INTROD, fill=INTROD)) + geom_bar(position="stack") + scale_x_continuous(breaks=c(0,1,2,5, 10, 25, 50, 75, 100), trans="log1p") + scale_fill_distiller(palette = "Spectral") + theme_bw()
+)
+
+```
+
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Red", "NewTeam", "Green"), repo=c("Uranus", "Jupiter", "IntTest", "Mars"), added=q95(data$ADD), removed=q95(data$DEL), duplicates=q95(data$DUP), complex=q95(data$COMPLEX))) + scale_y_continuous(limits = c(0.50,1.0)) + scale_x_continuous(limits = c(0,30))
+```
+
+## Letting the teams work in new repo
+```{r}
+allrepos <- c("Aniara", "Jupiter", "IntTest", "Mercury", "Venus", "Mars", "Saturn", "Neptune", "Uranus")
+
+(p <- plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Red", "NewTeam", "Brown"), repo=allrepos, added=q95(data$ADD), removed=q95(data$DEL), duplicates=q95(data$DUP), complex=q95(data$COMPLEX))) + scale_y_continuous(limits = c(0.20,1.0)) + scale_x_continuous(limits = c(0,30)))
+```
+
+
+```{r}
+(p <- plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Red", "NewTeam", "Green"), repo=c("Uranus", "Jupiter", "IntTest"), added=q95(data$ADD), removed=q95(data$DEL), duplicates=median(data$DUP), complex=median(data$COMPLEX))) + scale_y_continuous(limits = c(0.70,1.0)) + scale_x_continuous(limits = c(0,30)))
+```
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Red", "NewTeam"), repo=c("Uranus", "Jupiter", "IntTest"), added=q95(data$ADD), removed=q95(data$DEL), duplicates=20, complex=170)) + scale_y_continuous(limits = c(0.35,1)) + scale_x_continuous(limits = c(0,30))
+```
+
+
+
+```{r}
+data |> summarize(q95(ADD), q95(DEL), q95(COMPLEX), q95(DUP))
+```
+
+
+```{r}
+data |> group_by(repo) |> summarize(q95(ADD), q95(DEL), q95(COMPLEX), q95(DUP))
+```
+```{r}
+data |> group_by(repo) |> summarize(q99(ADD), q99(DEL), q99(COMPLEX), q99(DUP))
+
+```
+
+
+Strange that teams in the Neptune repo seems very simlar for this change?
+Neptune repo is mostly static, no team owning it. Mostly abandoned code.
+
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Blue", "Red", "NewTeam", "Orange"), repo=c("Uranus", "Jupiter", "Venus"), added=q95(data$ADD), removed=q95(data$DEL))) + scale_y_continuous(limits = c(0.6,1)) + scale_x_continuous(limits = c(0,20))
+```
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Blue", "Red", "NewTeam", "Orange"), repo=c("Uranus", "Jupiter", "IntTest"), added=mean(data$ADD), removed=mean(data$DEL))) + scale_y_continuous(limits = c(0.2,1.02)) + scale_x_continuous(limits = c(0,20))
+```
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Blue", "Red", "Arch", "NewTeam"), repo=c("Uranus", "Jupiter", "IntTest"), added=q95(data$ADD), removed=q95(data$DEL), complexity = mean(data$COMPLEX), duplicates=mean(data$DUP))) + scale_y_continuous(limits = c(0.2,1.0)) + scale_x_continuous(limits = c(0,30))
+```
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Blue", "Red", "Arch", "NewTeam"), repo=c("Uranus", "Jupiter", "IntTest"), added=q95(data$ADD), removed=q95(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP))) + scale_y_continuous(limits = c(0.3,1.0)) + scale_x_continuous(limits = c(0,30))
+```
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Green", "Yellow", "Orange", "NewTeam"), repo=c("Venus", "Jupiter", "IntTest"), added=q95(data$ADD), removed=q95(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP))) + scale_y_continuous(limits = c(0.5,1.0)) + scale_x_continuous(limits = c(0,30))
+```
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Brown","Red", "Green", "Yellow", "Orange", "NewTeam"), repo=c("Venus", "Jupiter", "IntTest"), added=q95(data$ADD), removed=q95(data$DEL), complexity = q95(data$COMPLEX), duplicates=q95(data$DUP))) + scale_y_continuous(limits = c(0.2,1.0)) + scale_x_continuous(limits = c(0,30))
+```
+
+```{r}
+plot_cumulative_prob_of_duplicates(predict_for_team(m, c("Arch", "Blue", "Brown","Red", "Green", "Yellow", "Orange", "NewTeam"), repo=c("Venus", "Jupiter", "IntTest"), added=q99(data$ADD), removed=q99(data$DEL), complexity = median(data$COMPLEX), duplicates=median(data$DUP))) + scale_y_continuous(limits = c(0.5,1.0)) + scale_x_continuous(limits = c(0,20))
+```
