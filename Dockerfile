@@ -56,6 +56,8 @@ RUN R -e 'cmdstanr::install_cmdstan(version="2.33.1")'
 USER root
 COPY analysis/ownership /home/app/analysis
 RUN chown -R app:app /home/app/analysis
+COPY analysis/.cache /home/app/.cache
+RUN chown -R app:app /home/app/.cache
 
 COPY analysis/render_all.sh /home/app
 RUN chown app:app /home/app/render_all.sh

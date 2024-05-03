@@ -1,9 +1,13 @@
 #! /bin/sh
+#
+# Override the CACHE environment variable if you do not want to use the embedded cached models.
+: "${CACHE:=../.cache}"
 
 SOURCE=analysis
 OUTPUT=ownership/output
 
 cat<<!
+
                Governing the Commons - Code Clones Replication Package
 
 Will render the Rmd files (possibly restricted via glob prefix PREFIX) in the
@@ -17,7 +21,7 @@ See README.md for details on how to specify this.
 !
 
 for f in ${SOURCE}/${PREFIX}*.Rmd; do
-    echo "============> Starting to generate file $f at:" $(date -Iseconds)
-    R -e "rmarkdown::render(\"$f\", output_dir=\"$OUTPUT\")" || echo "FAILED - please check your environment or settings"
-    echo "============> Finished file $f at:" $(date -Iseconds)
+    echo "============> Starting to generate file ${f} at:" $(date -Iseconds)
+    R -e "rmarkdown::render(\"${f}\", params=list(cache=\"${CACHE}\"), output_dir=\"${OUTPUT}\")" || echo "FAILED - please check your environment or settings"
+    echo "============> Finished file ${f} at:" $(date -Iseconds)
 done
