@@ -78,7 +78,7 @@ Using the brms default shape prior (gamma(0.01,0.01)) shows that we get unreason
 Because of this, we also have very few observations in the plausible range (1-1000 duplicates). 
 We also get some (1%) divergent transitions.
 Thus, we need to tighten that prior to some more realistic shape.
-After some experimenting, we arrive at gamma(1, 0.1) as a good compromise.
+After some experimenting, we arrive at `gamma(0.5, 0.1)` as a good compromise.
 
 ## Prior Predictive Checks
 ```{r ppc}
@@ -169,18 +169,9 @@ p + scale_x_continuous(limits=c(0,30))
 
 ### Group-level predictions
 
-We can use groups present in the data to show how predictions stack up to observations made per group.
-Here, beside showing the distribution, it is also important to consider the scale on the respective $x$-axis.
-Teams with few, and varied, observations (such as UI and Unknown) are more reliant on the priors, and will have a larger range of predictions.
-
 ```{r ppc_grouped_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per team")
 ```
-
-Plotting prior predictions per repo can show how our model compares relative to repo-level metrics.
-We see that Integration tests are a bit of an anomaly.
-Our model does not incorporate any repo-level group (only the team:repo-level grouping, that is, how each team behaves in a particular repo), so all predictions will follow the same distribution.
-Note how all $x$-axes are quite similar in scale (the difference comes from random variations, and differing number of data points arising from each reposiotory)
 
 ```{r ppc_grouped_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per repository")
@@ -244,7 +235,7 @@ loo
 plot(loo)
 ```
 
-We have 5 observations with high Pareto k values.
+We have 3 observations with high Pareto k values.
 These might be highly influential points, and should be investigated by the reloo function.
 This function will, in turn, exclude each suspicious data point, and refit the model, comparing the result with the original model).
 Most likely due to sparse data for some observations.
@@ -294,7 +285,7 @@ sim_max
 ```
 
 The most likely posterior max value is slightly below 100, and the observed value (from IntTest repository) is around 150.
-But our priors are not too strong, our models place some probability up to a few hundred clones.
+But our priors are not too strong, our models place some probability up to a few hundred removed duplicated.
 This means that we could trust that our model, in case such data should show up, will consider that data as well.
 
 ### Posterior standard distribution
@@ -311,7 +302,7 @@ Most of the probability mass are between 1.1nd 2 in standard deviation, slightly
 ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + ggtitle("Posterior predicted Q95 vs Q99")
 ```
 
-The model converges very well around the posterior observation of 1 as 95th percentile, and 5 as 99th percentile, while still allowing between 4 and 7 as 99th percentile.
+The model converges well, and predicts 95th percentile between 0 and 1, and 99th percentile between 3 and 5 (observed values, as indicated above, is 0 and 3, respectively).
 
 ### Posterior grouped predictions
 
@@ -320,22 +311,20 @@ ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$team) + ggtitle("Posteri
 ```
 
 The max value per team varies between teams, but for most teams the observed value fall reasonably well within the predictions.
-Red team  is the exception.
-Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour will not be visible.
+Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour due to this will not be visible.
 
 ```{r posterior_max_per_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$repo) + ggtitle("Posterior predictive max observation per repo")
 ```
 
-Posterior max per repository have some variation, in particular in Saturn and Jupiter.
+Posterior max per repository have some variation, in particular in Saturn, but still falls within the plausible range.
 
 ```{r posterior_q99_by_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quantile per team")
 ```
 
 The 99th quantile are more stable metrics than the max value.
-The UI team shows that they are more reliant on priors (have a much wider $x$ axis range in their predictions)
-
+The UI team shows that they are more reliant on priors (have a much wider $x$ axis range in their predictions)---this is because they have supplied fewer data points than the other teams.
 
 ```{r posterior_q99_per_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posterior predictive 99% quantile per repo")
@@ -343,13 +332,13 @@ ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posteri
 
 Similar conclusions for the 99th quantile per repository.
 
-Rootogram, full scale
+### Rootogram
 
 ```{r rootogram}
 rootogram <- pp_check(m, type = "rootogram", style="suspended")
 rootogram
 ```
-Rootogram, sized according to reasonable (observed) values.
+Sizing the rootgram according to reasonable (observed) values.
 
 ```{r}
 p <- rootogram + scale_x_continuous(limits=c(0,50)) + scale_y_continuous(limits=c(-3,30)) + ggtitle("Suspended rootogram, y=0 removed, x scaled to 0-50 prediction interval")
@@ -365,11 +354,16 @@ source("predict_utils.R")
 heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), complexity=q95(data$COMPLEX), duplicates = q95(data$DUP), summary=function(x) q99(x)), "Quantile 99%", decimals=0) + ggtitle("Quantile 99% per team and repo")
 ```
 
+Comparing the with the observed data, we see that the predicted 99th percentile is a good fit, though slightly higher (the observed data contains more 0).
+But the trend is clear---Integration tests dominate also the removals, with Yellow, Brown and Orange leading the way, and Pink, UI and Unknown lagging behind.
+In Neptune, the Architects and Green team lead, with Blue and Brown following up.
+
 ```{r}
 removals_probability(onepred(model=MR_intercepts_only))
 ```
 
 Apart from the Integration Test, and to some extent Neptune, this model does not really make much difference between teams in the various repositories.
+This is also illustrated in the heatmap above.
 
 ## Conclusion
 

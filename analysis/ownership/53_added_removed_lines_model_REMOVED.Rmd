@@ -1,5 +1,5 @@
 ---
-title: "53 Added and removed lines model for removals"
+title: "53 Existing duplicates, added and removed lines model for removals"
 author: "Anders Sundelin"
 date: "2023-03-19"
 output: html_document
@@ -37,10 +37,13 @@ cat(normalizePath(paste(getwd(), dirname(cachefile(MODEL_CACHE)), sep="/"), must
 
 The used cache directory can be controlled via the cache parameter to Rmd - it can be useful to experiment with this parameter if you Knit the document manually in RStudio.
 
-# Added-and-removed-lines model
+# Existing-duplicates, plus change size model
 
-Our next choice of model introduce two numerical predictors---added and removed lines, in addition to the existing categorical team and repository.
-The intercept and removed lines predictor is allowed to vary between teams, and between teams in repositories.
+As we are modeling removals of duplicates, it seems logical that the number of existing duplicates in a file would affect the probability of duplicates being removed.
+After all, if the file contains no duplicates, it will be impossible to remove any, no matter how much you change the file.
+For the team and team-in-repository components, we will use added and removed lines as predictor.
+
+This leaves us with the following model:
 
 ```{r}
 d <- data |> select(y=REMOVED,
@@ -72,7 +75,6 @@ priors <- c(prior(normal(0, 0.5), class = Intercept),
                family=zero_inflated_negbinomial)
 )
 ```
-
 
 ```{r}
 M_ppc <- brm(data = d,
@@ -108,53 +110,46 @@ yrep <- posterior_predict(m)
 ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0)) + ggtitle("Prior predicted proportion of zeros")
 ```
 
-### Max predicted value
+The proportion of zeros seem plausible.
 
-While our priors place the maximum likely value towards the lower end of the thousands, they do not rule out even 150--200 thousand duplicates in a single change (which we think is quite unrealistic).
-But it is important to allow some very unlikely values in the priors, because parameter space where prior information is zero will never show up in the posterior, even if it is present in the data (following Bayes' theorem).
-Thus, even though the priors show some unreasonable values, at least we know that if we ever see such data, our model will allow us to see it.
+### Max predicted value
 
 ```{r ppc_max}
 (sim_max <- ppc_stat(y = d$y, yrep, stat = "max") + ggtitle("Prior predicted max values")
 )
 ```
 
-Scaling to more reasonable values show that our model actually expects somewhat smaller max values than observed, on average - but we see above that it does encompass also the observed max value, and quite a bit more range.
-
 ```{r}
 sim_max + scale_x_continuous(limits = c(0,1000)) + ggtitle("Prior predicted max values up to 1000")
 ```
 
-### 99th percentile
+Maximum predictions is slightly wider than the intercept model, but the observed count fall within our prior predictions.
 
-The 99th percentile is a more stable metric than the maximum value for highly right-skewed data like ours.
-The priors do a good job of matching the observations.
+### 99th percentile
 
 ```{r ppc_q99}
 ppc_stat(y = d$y, yrep, stat = "q99") + ggtitle("Prior predicted Q99 vs. observed value")
 ```
 
+Relative to the intercept model, our priors place a little more probability on seeing duplicates being removed.
+The range is similar, though, it is just the distribution that changes.
 
 ### 99th vs 95th percentile
-
-We can even plot the 95th percentile versus the 99th, just to show how the spread of likely values vary.
 
 ```{r ppc_2d}
 (p <- ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + theme(legend.position="bottom") + ggtitle("Prior predicted Q95 vs Q99")
 )
 ```
 
-### Standard deviation
+Similar-looking 95th-vs-99th-percentile plot as the intercept model.
 
-The standard deviation of the predictions is a bit harder to grasp intuitively.
-But our prior information encompass the observed value well.
+### Standard deviation
 
 ```{r ppc_sd}
 (p <- ppc_stat(y = d$y, yrep, stat = "sd") + ggtitle("Prior predicted stddev vs. observed value")
 )
 ```
 
-Zooming in to show the distribution in more detail.
 Relative to the intercept model, this model has a slightly wider standard deviation range.
 
 ```{r}
@@ -163,22 +158,18 @@ p + scale_x_continuous(limits=c(0,30))
 
 ### Group-level predictions
 
-We can use groups present in the data to show how predictions stack up to observations made per group.
-Here, beside showing the distribution, it is also important to consider the scale on the respective $x$-axis.
-Teams with few, and varied, observations (such as UI and Unknown) are more reliant on the priors, and will have a larger range of predictions.
-
 ```{r ppc_grouped_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per team")
 ```
 
-Plotting prior predictions per repo can show how our model compares relative to repo-level metrics.
-We see that Integration tests are a bit of an anomaly.
-Our model does not incorporate any repo-level group (only the team:repo-level grouping, that is, how each team behaves in a particular repo), so all predictions will follow the same distribution.
-Note how all $x$-axes are quite similar in scale (the difference comes from random variations, and differing number of data points arising from each reposiotory)
+Wider prior predictions for most groups with these priors (Pink team being the exception).
 
 ```{r ppc_grouped_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per repository")
 ```
+
+When grouping per repository, there is much larger variation.
+Note that our model does not have any repository-only predictor, only "team-in-repository" (the reason being that a repository is not acting on its own---all changes are performed by a team).
 
 ## Model execution and diagnostics
 
@@ -220,7 +211,9 @@ lapply(plots, function(i) {
   })
 ```
 
-We see that certain chains did not converge properly.
+Now we run into problem with the model convergence---we see that certain chains did not converge properly.
+For instance, the `b_D` and `b_zi_D` predictors did not converge at all, and the intercepts are also fishy, as is the shape.
+
 
 ```{r, rhat_neff}
 mcmc_plot(m, type="rhat")
@@ -229,7 +222,7 @@ mcmc_plot(m, type="neff")
 mcmc_plot(m, type="neff_hist")
 ```
 
-And also that some $\hat{R}$ values are much higher than 1.
+We see also that some $\hat{R}$ values are much higher than 1.
 
 This means that the model did not converge properly, and we should not trust the posterior predictions.
 
