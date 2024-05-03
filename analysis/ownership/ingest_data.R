@@ -219,7 +219,7 @@ ocam_rank_repo <- function(df) {
     group_by(repo) |> ggplot(aes(x=committerteam, y=name)) + geom_tile(aes(fill=metric)) + facet_wrap(~ repo, ncol=1) + 
     geom_text(aes(label=metric)) + xlab("team") + ylab("metric") + coord_fixed() + scale_y_discrete(labels=ocam_labels_plain) + 
     scale_fill_gradient2(name="team rank", guide=guide_legend(reverse=T), midpoint=6, low = "#91BFDB", mid = "#FFFFBF", high = "#FC8D59")  + 
-    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.25)) + theme(legend.position = "none") #+ ggtitle(paste("OCAM rank for repo", repo$repo))
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.25)) + theme(legend.position = "none")
 }
 
 # https://stackoverflow.com/questions/6461209/how-to-round-up-to-the-nearest-10-or-100-or-x
