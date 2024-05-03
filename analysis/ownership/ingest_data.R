@@ -208,6 +208,6 @@ roundUpNice <- function(x, nice=1:10) {
   10^floor(log10(x)) * nice[[which(x <= 10^floor(log10(x)) * nice)[[1]]]]
 }
 
-figsave <- function(file, p, width=15, height=17.8, units="cm") ggsave(file, p, device = "pdf", dpi = 1200, width=width, height=height, units=units)
+figsave <- function(file, p, width=15, height=17.8, units="cm") ggsave(paste(params$output, file, sep="/"), p, device = "pdf", dpi = 1200, width=width, height=height, units=units)
 
-pngsave <- function(file, p, width=15, height=17.8, units="cm") ggsave(file, p, device = "png", dpi = 1200, width=width, height=height, units=units)
+pngsave <- function(file, p, width=15, height=17.8, units="cm") ggsave(paste(params$output,file, sep="/"), p, device = "png", dpi = 1200, width=width, height=height, units=units)

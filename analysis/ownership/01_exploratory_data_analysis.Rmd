@@ -3,6 +3,9 @@ title: "01 Exploratory Data Analysis"
 author: "Anders Sundelin"
 date: "2023-03-18"
 output: html_document
+params: 
+    cache: "../ownership/.cache"
+    output: "../ownership/output"
 ---
 
 ```{r setup, include=FALSE}

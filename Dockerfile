@@ -60,4 +60,6 @@ RUN chown -R app:app /home/app/analysis
 USER app
 RUN mkdir -p /home/app/ownership/.cache
 
+# RMarkdown defaults to use the parent directory of the Rmd as PWD, so paths inside the Rmd should be relative to this.
+# However, the output_dir parameter itself is relative to the docker root (WORKDIR above)
 CMD ["R", "-e", "rmarkdown::render('analysis/01_exploratory_data_analysis.Rmd', output_dir='ownership/output')" ]
