@@ -191,7 +191,6 @@ figsave("99-posterior_prop_zeros.pdf", p)
 ## Figure 6 - Observed proportion of file changes
 
 As we do not know to which team the Unknown authors belong, they are excluded from the plot.
-In all likelihood, the 
 
 ```{r observed-prop-dup}
 changesPerRepoAndTeam <- data |> group_by(repo, committerteam) |> summarise(fileschanged=n())
