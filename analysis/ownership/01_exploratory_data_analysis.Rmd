@@ -1,0 +1,1584 @@
+---
+title: "01 Exploratory Data Analysis"
+author: "Anders Sundelin"
+date: "2023-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(brms)
+library(bayesplot)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+options(dplyr.summarise.inform = FALSE)
+```
+
+## Exploring why certain teams introduce duplicates
+
+Models are cached in subdirectory, as they take considerable time to run. Expect multiple hours for the complete, multi-level model with all the data set.
+You might need to remove the cached models when changing some parameters (though formula or data changes are usually detected by brms).
+
+We move away from zero-based scaling, instead opting for scaling the logarithm of the severely right-skewed values (added, removed, complexity, duplicated lines).
+We are also heeding the advice of Gelman: https://statmodeling.stat.columbia.edu/2019/08/21/you-should-usually-log-transform-your-positive-data/
+This also means that the linear model will be based on the _magnitude_ of the change in parameter (e.g. 0, 1, 2.7, 7.3, 19.8 added lines/existing complexity). So each individual line will have marginally lower impact, but the scale of the parameter will still matter.
+
+A simple scientific model, where rates of change is taken from the population only, and the intercept varies per group becomes:
+
+$log(\lambda) = \beta_{0,i} + \beta_A A_i + \beta_C C_i + \beta_D D_i$
+
+where
+
+$A_i = \frac{ln(added_i+1) - \hat{\mu_{\alpha}}}{\hat{\sigma_{\alpha}}}$
+
+and
+$\hat{\mu_{\alpha}} = mean(ln(added+1))$
+$\hat{\sigma_{\alpha}} = stddev(ln(added+1))$
+
+$C_i = \frac{ln(complexity_i+1) - \hat{\mu_{\gamma}}}{\hat{\sigma_{\gamma}}}$
+
+and
+$\hat{\mu_{\gamma}} = mean(ln(complexity+1))$
+$\hat{\sigma_{\gamma}} = stddev(ln(complexity+1))$
+
+and
+
+$D_i = \frac{ln(dupblocks_i+1) - \hat{\mu_{\delta}}}{\hat{\sigma_{\delta}}}$
+
+and
+$\hat{\mu_{\delta}} = mean(ln(dupblocks+1))$
+$\hat{\sigma_{\delta}} = stddev(ln(dupblocks+1))$
+
+This corresponds to the following multiplicative model for $\lambda$ (also called $\mu$ in the negative binomial context):
+
+$\lambda_i = e^{\beta_{0,i}} (\frac{added_i+1}{e^\hat{\mu_\alpha}})^{\frac{\beta_A}{\hat{\sigma_\alpha}}} (\frac{complexity_i+1}{e^\hat{\mu_\gamma}})^{\frac{\beta_C}{\hat{\sigma_\gamma}}} (\frac{duplicates_i+1}{e^\hat{\mu_\delta}})^{\frac{\beta_D}{\hat{\sigma_\delta}}}$
+
+In this equation, $added$, $complexity$ and $duplicates$ are on their natural scale, starting at 0 and counting upwards.
+
+Depending on which parameters we include in the group-level effect, the exponent will change accordingly (hence the $i$ in $\beta_{0,i}$ for the model where only the intercept changes per team and repo).
+The other parameters, $\hat{\mu_\alpha}$ and $\hat{\sigma_\alpha}$, et al. are just normalizing constants, defined as the mean and standard deviation of the logarithm of the corresponding metric count.
+```{r}
+INTTEST <- "IntTest"
+JUPITER <- "Jupiter"
+MARS <- "Mars"
+MERCURY <- "Mercury"
+NEPTUNE <- "Neptune"
+SATURN <- "Saturn"
+URANUS <- "Uranus"
+VENUS <- "Venus"
+
+ARCH <- "Arch"
+BLUE <- "Blue"
+BROWN <- "Brown"
+GREEN <- "Green"
+NEWTEAM <- "NewTeam"
+ORANGE <- "Orange"
+PINK <- "Pink"
+RED <- "Red"
+UI <- "UI"
+UNKNOWN <- "Unknown"
+VIOLET <- "Violet"
+YELLOW <- "Yellow"
+
+```
+
+```{r ingest data}
+source("ingest_data.R")
+levels(data$repo)
+levels(data$committerteam)
+levels(data$authorteam)
+```
+
+```{r}
+levels(data$repo) <- c(INTTEST, JUPITER, MARS, MERCURY, NEPTUNE, SATURN, URANUS, VENUS)
+levels(data$committerteam) <- c(ARCH, BLUE, BROWN, GREEN, ORANGE, PINK, RED, UI, UNKNOWN, VIOLET, YELLOW)
+levels(data$authorteam) <- c(ARCH, BLUE, BROWN, GREEN, ORANGE, PINK, RED, UI, UNKNOWN, VIOLET, YELLOW)
+```
+
+# Exploratory Data Analysis
+
+Introduced duplicates in files, per repo.
+
+```{r}
+#describe_distribution <- function(df, x) { df |> select(x) }#|> summarize(min=min(x), low=quantile(x, 0.25), median=quantile(x, 0.5), high=quantile(x, 0.75), very_high=quantile(x, 0.99), max=max(x))}
+
+#describe_distribution(data, ADD)
+low_stat <- function(x) quantile(x, 0.25, type=3)
+median_stat <- function(x) quantile(x, 0.5, type=3)
+high_stat <- function(x) quantile(x, 0.75, type=3)
+q95_stat <- function(x) q95(x)
+very_high_stat <- function(x) quantile(x, 0.99, type=3)
+max_stat <- function(x) max(x)
+
+m1 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, min)) |> pivot_longer(cols=everything(), values_to="min")
+m2 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, low_stat)) |> pivot_longer(cols=everything(), values_to="low")
+m3 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, median_stat)) |> pivot_longer(cols=everything(), values_to="median")
+m4 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, high_stat)) |> pivot_longer(cols=everything(), values_to="high")
+m5 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, q95_stat)) |> pivot_longer(cols=everything(), values_to="q95")
+m6 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, very_high_stat)) |> pivot_longer(cols=everything(), values_to="very_high")
+m7 <- data |> select(ADD, DEL, COMPLEX, DUP, INTROD) |> summarise(across(ADD:INTROD, max)) |> pivot_longer(cols=everything(), values_to="max")
+
+metrics <- merge(
+merge(
+  merge(
+    merge(
+      merge(
+        merge(m1, m2, by="name"),
+        m3, by="name"),
+      m4, by="name"),
+    m5, by="name"),
+  m6, by="name"),
+m7, by="name")
+metrics
+```
+
+```{r}
+data |> filter(INTROD > 0) |> group_by(repo, INTROD) |> tally()
+```
+
+Most of the introduced duplicates are small (single-digits), but some are large, ranging into the hundreds for the IntTest repo.
+
+```{r}
+changesPerRepoAndTeam <- data |> group_by(repo, committerteam) |> summarise(fileschanged=n())
+zerosPerRepoAndTeam <- data |> filter(INTROD == 0) |> group_by(repo, committerteam) |> summarise(zeros=n())
+zeros_ratio <- merge(changesPerRepoAndTeam, zerosPerRepoAndTeam) |> mutate(introdRatio = 1-(zeros/fileschanged)) |> arrange(introdRatio)
+
+(p <- zeros_ratio |> filter(committerteam != "Unknown") |> ggplot(aes(x=committerteam, y=introdRatio, color=committerteam, size=fileschanged)) + geom_point() + facet_wrap(~ repo) + xlab("team") + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + scale_y_continuous(limits=c(0,0.27)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+)
+```
+Unknown team change 7 files in Neptune, and manage to get 3 files with duplicates there. Excluding Unknown from this presentation, saves screen real estate.
+
+
+```{r}
+figsave("observed_proportion_dup_per_repo_team.pdf", p)
+```
+
+
+```{r}
+changesPerRepoAndTeam <- data |> group_by(repo, authorteam) |> summarise(fileschanged=n())
+zerosPerRepoAndTeam <- data |> filter(INTROD == 0) |> group_by(repo, authorteam) |> summarise(zeros=n())
+zeros_ratio <- merge(changesPerRepoAndTeam, zerosPerRepoAndTeam) |> mutate(introdRatio = 1-(zeros/fileschanged)) |> arrange(introdRatio)
+
+zeros_ratio |> ggplot(aes(x=authorteam, y=introdRatio, color=repo, size=fileschanged)) + geom_point() + ggtitle("Proportion of introduced duplicates in one file, per repo and team") #+ scale_y_continuous(limits=c(0,0.3))
+```
+Except for the Unknown outlier, there are not any large differences whether we group on authorteam or committerteam.
+```{r}
+
+```
+
+```{r}
+data |> filter(repo %in% c(INTTEST, JUPITER, URANUS), committerteam %in% c(RED, BLUE, PINK)) |> 
+  group_by(committerteam, repo, INTROD) |> ggplot(aes(x=INTROD, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) + 
+    xlab("Maximum number of introduced duplicates") +
+    ggtitle("Cumulative introduced duplicates")  +
+#            paste0("added: ", round(added$added, 0), " removed: ", round(removed$removed, 0), " complexity: ", round(complexity$complexity, 0), " duplicates: ", round(duplicates$duplicates, 0))) +
+    scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + scale_y_continuous(limits = c(0.7, 1)) + scale_x_continuous(limits = c(0,20))
+```
+
+```{r}
+data |> filter(committerteam== RED, repo==SATURN) |> arrange(desc(INTROD)) |> head()
+```
+
+
+```{r}
+#data |> filter(repo == JUPITER, committerteam %in% c(RED, BLUE, GREEN, ARCH)) |> group_by(committerteam, COMPLEX) |> summarize(n=n())#, quantile(COMPLEX, 0.25, type=3), median(COMPLEX), quantile(COMPLEX, 0.75, type=3), max(COMPLEX))
+```
+
+```{r}
+#data |> filter(repo == JUPITER) |> summarize(n=n(), quantile(data$COMPLEX, 0.25, type=3), median(data$COMPLEX), quantile(data$COMPLEX, 0.75, type=3), max(data$COMPLEX))
+```
+
+```{r}
+#data |> filter(repo == JUPITER, committerteam %in% c(RED, BLUE, GREEN, ARCH)) |> group_by(committerteam, INTROD) |> summarize(n=n()) |> mutate(freq = 1-(n/sum(n))) |> arrange(freq)
+
+```
+```{r}
+data |> filter(repo == JUPITER) |> group_by(INTROD) |> tally() |> mutate(freq = n/sum(n)) |> arrange(desc(freq))
+```
+
+
+```{r}
+data |> filter(repo == JUPITER, committerteam %in% c(RED, BLUE)) |> group_by(committerteam, INTROD) |> tally()
+```
+
+```{r}
+data |> filter(repo == JUPITER, committerteam %in% c(RED, BLUE)) |> group_by(committerteam) |> summarize(mean(ADD), mean(DEL), mean(COMPLEX), mean(DUP))
+data |> filter(repo == JUPITER, committerteam %in% c(RED, BLUE)) |> group_by(committerteam) |> summarize(median(ADD), median(DEL), median(COMPLEX), median(DUP))
+data |> filter(repo == JUPITER, committerteam %in% c(RED, BLUE)) |> group_by(committerteam) |> summarize(q95(ADD), q95(DEL), q95(COMPLEX), q95(DUP))
+
+```
+
+
+Viewing the added and removed lines, we see some correlation, and also quite a few "pure additions" and "pure removals" (along the x and y axes, respectively).
+
+```{r}
+data |> ggplot(aes(x=DUP)) + geom_histogram(bins=50)
+```
+
+```{r}
+data |> group_by(DUP) |> tally()
+```
+
+```{r}
+data |> group_by(COMPLEX) |> tally()
+```
+
+
+```{r}
+data |> group_by(repo) |> ggplot(aes(x=logADD, y=logDEL, color=authorteam)) + geom_point() + facet_wrap( ~ repo)
+```
+
+We see that, overall, there are more duplicates present in the IntTest and Jupiter repos (largest one). And there seems to be at least some indications of correlation with complexity (although there are also some duplicates in files where complexity is 0, i.e. the y axis).
+
+```{r}
+data |> group_by(repo) |> ggplot(aes(x=logCOMPLEX, y=logDUP)) + geom_point() + facet_wrap( ~ repo)
+```
+
+A more thorough pairs plot reveal that the parameters seem quite independet - at least no obvious correlations are present (though logCOMPLEX and logDUP are somewhat related, as seen above). Plot can be repeated per repo or per team, with the same conclusions.
+
+```{r}
+ggpairs(data |> select(logADD, logDEL, logCOMPLEX, logDUP))
+```
+
+```{r}
+# quantile type 3 to avoid having interpolation of the observations
+repo_committerteam <- data |> group_by(repo, committerteam) |> summarize(q95=quantile(INTROD, 0.95, type=3),
+                                                                         q99=quantile(INTROD, 0.99, type=3),
+                                                                         max=max(INTROD),
+                                                                         files=n(),
+                                                                         mean_added=mean(ADD),
+                                                                         median_added=median(ADD),
+                                                                         mean_removed=mean(DEL),
+                                                                         median_removed=median(DEL)) |> mutate(team=committerteam)
+
+```
+
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=files)) +
+    geom_text(aes(label=round(files, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed number of changes to files by team and repo"))
+```
+
+Repositories are named and sized (though not to scale) after the seven neighboring planets, plus the INTTEST repository, which contains integration tests developed in Java.
+
+We note that some teams have not changed files in some repostories, and that some teams have made very many, and some very few changes to some repositories.
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=mean_added)) +
+    geom_text(aes(label=round(mean_added, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed mean number of added lines to files by team and repo"))
+```
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=median_added)) +
+    geom_text(aes(label=round(median_added, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed median number of added lines to files by team and repo"))
+```
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=mean_removed)) +
+    geom_text(aes(label=round(mean_removed, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed mean number of removed lines to files by team and repo"))
+```
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=median_removed)) +
+    geom_text(aes(label=round(median_removed, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed median number of removed lines to files by team and repo"))
+```
+
+
+```{r}
+plot_existing_dup_in_repo <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=logDUP, color=team, fill=team)) + geom_histogram(position = "dodge", binwidth = 1) + ggtitle(paste("Existing log(duplicates+1) in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("filechanges") + xlab("Log existing duplicates")
+}
+three_teams <- function(x) x %in% c(ARCH, RED, BLUE, GREEN)
+
+(p <- plot_existing_dup_in_repo(JUPITER, three_teams) + theme_bw() )
+
+(p <- plot_existing_dup_in_repo(INTTEST, three_teams) + theme_bw() )
+
+```
+
+```{r}
+plot_existing_complexity_in_repo <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=logCOMPLEX, color=team, fill=team)) + geom_histogram(aes(y=..density..), position = "dodge", binwidth = 1) + ggtitle(paste("Existing log(complexity+1) in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("proportion of filechanges") + xlab("Log existing complexity")
+}
+three_teams <- function(x) x %in% c(ARCH, RED, BLUE, GREEN)
+
+(p <- plot_existing_complexity_in_repo(JUPITER, three_teams) + theme_bw() )
+
+(p <- plot_existing_complexity_in_repo(INTTEST, three_teams) + theme_bw() )
+
+(p <- plot_existing_complexity_in_repo(URANUS, three_teams) + theme_bw() )
+
+```
+
+```{r}
+data |> filter(repo == JUPITER, committerteam %in% c(BLUE, RED)) |> group_by(committerteam) |> summarize(n(), mean(COMPLEX), median(COMPLEX), mean(DUP), q95(DUP))
+```
+
+
+Picking a random repo, and three random teams, show that the number of introduced duplicates follow a Poisson-like (or Negative Binomial) distribution, once you exclude all the zeros, for the zero-inflation part.
+
+```{r}
+plot_introd_issues_in_repo <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=INTROD, color=team, fill=team)) + geom_histogram(binwidth = 1) + facet_wrap(~ team) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("number of changed files") + xlab("Number of duplicates introduced in the change") + ylim(0,65)
+}
+(p <- plot_introd_issues_in_repo(JUPITER, function(x) x %in% c(RED, BLUE, GREEN, ARCH)) + theme_bw() + theme(legend.position = "bottom"))
+```
+```{r}
+figsave("observed-INTROD-4teams-Jupiter.pdf", p)
+```
+
+
+```{r}
+plot_introd_issues_in_repo <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=INTROD, color=team, fill=team)) + geom_histogram(aes(y=..density..), position = "dodge", binwidth = 1) + ggtitle(paste("Introduced duplicates in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("proportion of filechanges") + xlab("Number of duplicates introduced in the change") + ylim(0,0.1)
+}
+three_teams <- function(x) x %in% c(RED, BLUE, BROWN)
+
+(p <- plot_introd_issues_in_repo(JUPITER, three_teams) + theme_bw() + ylim(0,0.045)
+)
+```
+```{r}
+figsave("observed_introd_jupiter_four_teams.pdf", p)
+```
+
+```{r}
+plot_introd_per_team <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=INTROD, color=team, fill=team)) + geom_histogram(aes(y=..density..), binwidth = 1) + facet_wrap(~ team) + ggtitle(paste("Introduced duplicates in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("proportion of filechanges") + xlab("Number of duplicates introduced in the change") + ylim(0,0.1)
+}
+
+```
+```{r}
+(p <- plot_introd_per_team(JUPITER, function(x) x %in% c(ARCH, RED, BLUE, GREEN)) + theme_bw() + scale_y_continuous(limits=c(0,0.04)) )
+pngsave("observed-INTROD-4teams-Jupiter.png", p)
+```
+
+
+```{r}
+(p <- plot_introd_per_team(INTTEST, function(x) x %in% c(ARCH, RED, BLUE, GREEN)) + theme_bw() + scale_y_continuous(limits=c(0,0.04)) )
+pngsave("observed-INTROD-4teams-IntTest.png", p)
+
+```
+```{r}
+(p <- plot_introd_per_team(URANUS, function(x) x %in% c(ARCH, RED, BLUE, GREEN)) + theme_bw() + scale_y_continuous(limits=c(0,0.06)) )
+```
+```{r}
+(p <- plot_introd_per_team(VENUS, function(x) x %in% c(ARCH, RED, BLUE, GREEN)) + theme_bw() + scale_y_continuous(limits=c(0,0.04)) )
+pngsave("observed-INTROD-4teams-Venus.png", p)
+```
+
+```{r}
+data |> filter(repo == INTTEST, committerteam == ARCH) |> group_by(INTROD) |> tally()
+```
+
+```{r}
+data |> filter(repo == VENUS, committerteam == ARCH) |> group_by(INTROD) |> tally()
+```
+
+```{r}
+data |> filter(repo == VENUS, committerteam == GREEN) |> group_by(INTROD) |> tally()
+
+```
+
+
+```{r}
+(p <- plot_introd_issues_in_repo(INTTEST, three_teams) + theme_bw() + ylim(0,0.045) )
+
+```
+
+setting the xlim seems to make the histogram behave weirdly... so, better to focus on the ylim - this will make the histogram work correctly...
+```{r}
+data |> filter(repo == INTTEST, committerteam == BLUE) |> group_by(INTROD) |> tally()
+```
+
+
+```{r}
+data |> filter(committerteam %in% c(BLUE,  GREEN), repo == URANUS) |> group_by(committerteam) |> summarize(median(COMPLEX))
+
+```
+
+```{r}
+data |> filter(committerteam %in% c(BLUE,  GREEN), repo == MARS) |> group_by(committerteam, INTROD) |> summarize(n=n(), median(COMPLEX)) |> mutate(freq=n/sum(n))
+
+```
+
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo == JUPITER) |> group_by(committerteam, INTROD) |> summarize(n=n()) |> mutate(freq=n/sum(n))
+```
+
+There are also differences between teams --- we see that the ARCH team in this repo introduced very few duplicates, whereas the Blue and Green teams were more comparable.
+
+The pattern is even more pronounced in the IntTest repo
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo == URANUS) |> group_by(committerteam, INTROD) |> summarize(n=n()) |> mutate(freq=n/sum(n))
+
+```
+
+
+
+```{r}
+(p <- data |> filter(committerteam %in% c(ARCH, BLUE, RED, BROWN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam, INTROD) |> ggplot(aes(x=INTROD, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) + 
+    xlab("Maximum number of introduced duplicates") +
+    ggtitle("Observed cumulative distribution of introduced duplicates") +
+    scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + scale_y_continuous(limits = c(0.85,1.0)) #+ scale_x_continuous(limits = c(0,30))
+)
+#|> summarize(n=n()) |> mutate(freq=n/sum(n)) |> ggplot(aes(x=INTROD, y=freq, color=committerteam)) + geom_line()
+```
+```{r}
+figsave("observed_introd.pdf", p)
+```
+
+```{r}
+(p <- data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam) |> ggplot(aes(x=COMPLEX, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) +  scale_x_continuous(trans="log1p", breaks=c(0,1,3,10,50,200, 1000)) +
+  scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + 
+  xlab("Existing complexity in changed file (log scale)") +
+  ggtitle("Observed cumulative frequency of existing complexity")
+)
+```
+```{r}
+figsave("observed_complexity.pdf", p)
+```
+
+In the Jupiter repo, Team Blue are more likely to make changes in less complex files, relative to the Red team. Same for Arch team.
+In the Neptune repo, the Arch team likewise are less likely to change complex files, but the Blue and Red teams are more similar.
+
+
+```{r}
+data |> summarize(max(ADD), max(DEL), max(COMPLEX), max(DUP))
+```
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(committerteam) |> summarize(n(), max(ADD), max(DEL), max(COMPLEX), max(DUP), q95(ADD), q95(DEL), q95(COMPLEX), q95(DUP))
+
+```
+
+
+```{r}
+(p <- data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam) |> ggplot(aes(x=DUP, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) + scale_x_continuous(trans="log1p", breaks=c(0,1,3,10,50,200, 1000)) +
+    scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + 
+  xlab("Duplicates in changed file (log scale)") +
+  ggtitle("Observed cumulative frequency of existing duplicates")
+)
+```
+
+```{r}
+figsave("observed_duplicates.pdf", p)
+```
+
+```{r}
+(p <- data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam) |> ggplot(aes(x=ADD, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) +
+  scale_x_continuous(trans="log1p", breaks=c(0,1,3,10,50,200, 1000)) + #, guide=guide_axis(angle=90)) +
+  scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + 
+  xlab("Number of added lines (log scale)") +
+  ggtitle("Observed cumulative frequency of added lines")
+)
+```
+
+```{r}
+figsave("observed_added.pdf", p)
+```
+
+```{r}
+(p <- data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam) |> ggplot(aes(x=DEL, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) +
+  scale_x_continuous(trans="log1p", breaks=c(0,1,3,10,50,200, 1000, 4000)) +
+  scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() +
+  xlab("Number of deleted lines (log scale)") +
+    ggtitle("Observed cumulative frequency of deleted lines") #+ scale_y_continuous(limits = c(0.9,1))
+)
+```
+```{r}
+figsave("observed_removed.pdf", p)
+```
+
+```{r}
+quantile_table <- function(df) {
+  df |> mutate(team=committerteam) |> group_by(repo, team) |> summarize(n=n(), q50ADD=median(ADD), q50DEL=median(DEL), q50COMP=median(COMPLEX), q50DUP=median(DUP), q75ADD=quantile(ADD, 0.75, type=3), q75DEL=quantile(DEL, 0.75, type=3), q75COMP=quantile(COMPLEX, 0.75, type=3), q75DUP=quantile(DUP, 0.75, type=3))
+}
+quantile_table(data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)))
+```
+
+```{r}
+
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> mutate(team=committerteam) |> group_by(repo, team) |> summarize(n=n(), q50ADD=median(ADD), q50DEL=median(DEL), q50COMP=median(COMPLEX), q50DUP=median(DUP), q95ADD=quantile(ADD, 0.95, type=3), q95DEL=quantile(DEL, 0.95, type=3), q95COMP=quantile(COMPLEX, 0.95, type=3), q95DUP=quantile(DUP, 0.95, type=3))
+```
+
+```{r}
+data |> filter(committerteam %in% c(GREEN, BLUE, RED), repo %in% c(JUPITER, NEPTUNE, URANUS)) |> mutate(team=committerteam) |> group_by(team, repo) |> summarize(n=n(), q50ADD=median(ADD), q50DEL=median(DEL), q50COMP=median(COMPLEX), q50DUP=median(DUP), q95ADD=quantile(ADD, 0.95, type=3), q95DEL=quantile(DEL, 0.95, type=3), q95COMP=quantile(COMPLEX, 0.95, type=3), q95DUP=quantile(DUP, 0.95, type=3))
+```
+
+```{r}
+data |> filter(committerteam %in% c(BLUE)) |> mutate(team=committerteam) |> group_by(repo, team) |> summarize(n=n(), q50ADD=median(ADD), q50DEL=median(DEL), q50COMP=median(COMPLEX), q50DUP=median(DUP), q95ADD=quantile(ADD, 0.95, type=3), q95DEL=quantile(DEL, 0.95, type=3), q95COMP=quantile(COMPLEX, 0.95, type=3), q95DUP=quantile(DUP, 0.95, type=3))
+
+```
+
+
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED), repo == JUPITER, DEL <= 3) |> group_by(committerteam) |> tally()
+```
+
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam, COMPLEX, logCOMPLEX) |> ggplot(aes(x=COMPLEX, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) + 
+    scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + scale_x_continuous(trans="log1p", breaks=c(0,3,10,50,200, 1000))
+
+```
+
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER, URANUS)) |> group_by(repo, committerteam, logCOMPLEX) |> ggplot(aes(x=logCOMPLEX, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) +
+    scale_color_manual(values=COLOR_BY_TEAM) + theme_bw()
+```
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED, GREEN), repo %in% c(INTTEST, JUPITER)) |> group_by(repo, committerteam, logDUP) |> ggplot(aes(x=logDUP, color=committerteam)) + stat_ecdf() + facet_wrap(~ repo) +
+    scale_color_manual(values=COLOR_BY_TEAM) + theme_bw()
+
+```
+
+
+
+```{r}
+data |> filter(committerteam %in% c(ARCH, BLUE, RED), repo == INTTEST) |> group_by(committerteam, INTROD) |> summarize(n=n()) |> mutate(freq=n/sum(n)) |> ggplot(aes(x=INTROD, y=freq, color=committerteam)) + geom_line()
+```
+
+
+```{r}
+(p <- plot_introd_issues_in_repo(INTTEST, three_teams) + ylim(0,0.045) )
+```
+
+There seem to be some team-level variation, as well as repo-level variation in the number of introduced duplicates.
+
+Comparing the largest repo, and the three largest contributors to that repo reveals that the Blue team is more likely to introduce a small amount of duplicates (it has almost double the amount of single-added duplicates as the Red team, which has a similar amount of contributions). But the red team has some more occurrences of 4-8 duplicates added to a single file.
+
+```{r}
+pngsave <- function(file, p, width=16*1.25, height=9*1.25, units="cm") ggsave(file, p, device = "png", dpi = 1200, width=width, height=height, units=units)
+pngsave("observed_INTROD_inttest.png", p)
+```
+
+
+```{r}
+(p <- plot_introd_issues_in_repo(JUPITER, function(x) x %in% c(RED, GREEN,BLUE)) + ylim(0,0.045) )
+```
+```{r}
+pngsave("observed_INTROD_billrun.png", p)
+```
+
+```{r}
+( data |> filter(committerteam == BLUE, ISTEST==F) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.04) + ggtitle(paste0("Introduced duplicates in non-test code by team ", BLUE)) )
+```
+
+```{r}
+(data |> filter(committerteam == BLUE, ISTEST==T) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.04) + ggtitle(paste0("Introduced duplicates in test code by team ", BLUE)) )
+```
+```{r}
+(data |> filter(committerteam == BLUE) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + facet_wrap(~ ISTEST) + scale_y_continuous(labels=scales::percent) + ylim(0,0.025) + ggtitle(paste0("Introduced duplicates overall by team ", BLUE)) )
+```
+```{r}
+(data |> filter(committerteam == BLUE) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.04) + ggtitle(paste0("Introduced duplicates overall by team ", BLUE)) )
+
+```
+
+
+```{r}
+data |> filter(repo == JUPITER, committerteam == RED) |> filter(INTROD >  0) 
+```
+
+```{r}
+plot_introd_issues_in_repo(MARS, function(x) x %in% c(RED, GREEN,BLUE))+ ylim(0,0.05)
+```
+```{r}
+data |> filter(repo == MARS, committerteam == RED) |> filter(INTROD >  0) 
+```
+```{r}
+data |> filter(repo == URANUS, committerteam == RED) |> filter(INTROD >  0) 
+```
+
+```{r}
+data |> filter(repo == VENUS, committerteam == RED) |> filter(INTROD >  0) 
+```
+```{r}
+plot_introd_issues_in_repo(SATURN, function(x) x %in% c(RED, GREEN,BLUE))+ ylim(0,0.05)
+```
+
+```{r}
+data |> filter(repo == SATURN, committerteam == RED) |> filter(INTROD >  0) 
+```
+
+
+Quantile plots
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=q95)) +
+    geom_text(aes(label=round(q95, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed 95% introductions by team and repo"))
+```
+
+The 95% quantile plots show that for many repos, and many teams in those repos, in 19 out of 20 file changes, no duplicates were added. The outlier is INTTEST, where many teams can be expected to introduce single-digit duplicates. In the NEPTUNE repository, we also can expect some more duplicate introduction than in the others.
+
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=q99)) +
+    geom_text(aes(label=round(q99, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed 99% introductions by team and repo"))
+
+```
+
+The pattern repeats for the 99% quantile. Integration test can be expected to have more duplicates introduced, and in particular the Brown team stands out.
+In the Neptune repo, however, it is the Blue and Green teams that are a bit more likely to introduce duplicates.
+
+We also note that the Architect team are unlikely to introduce duplicates.
+
+
+```{r}
+repo_committerteam|> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=max)) +
+    geom_text(aes(label=round(max, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed max number of introduced duplicates by team and repo"))
+```
+```{r}
+repo_committerteam_summary <- repo_committerteam |> mutate(files=replace_na(files, 0)) |> group_by(repo) |> summarize(mx=max(files), mn=min(files))
+(p <- repo_committerteam |> inner_join(repo_committerteam_summary) |> mutate(p=(files - mn)/(mx-mn)) |> 
+  ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=p)) +
+    geom_text(aes(label=round(files, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle("Observed number of changes to files by team and repo", "Heatmap colored by row")
+)
+```
+```{r}
+pngsave("filechanges_per_team_and_repo.png", p)
+```
+
+
+```{r}
+repo_committerteam_summary <- repo_committerteam |> mutate(max=replace_na(max, 0)) |> group_by(repo) |> summarize(mx=max(max), mn=min(max))
+(p <- repo_committerteam |> inner_join(repo_committerteam_summary) |> mutate(p=(max - mn)/(mx-mn)) |> 
+  ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=p)) +
+    geom_text(aes(label=round(max, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle("Observed max number of introduced duplicates by team and repo", "Heatmap colored by row")
+)
+```
+
+```{r}
+pngsave("max_introd_per_team_and_repo.png", p)
+```
+
+
+```{r}
+repo_committerteam_summary <- repo_committerteam |> mutate(max=replace_na(q99, 0)) |> group_by(repo) |> summarize(mx=max(q99), mn=min(q99))
+(p <- repo_committerteam |> inner_join(repo_committerteam_summary) |> mutate(p=(q99 - mn)/(mx-mn)) |> 
+  ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=p)) +
+    geom_text(aes(label=round(q99, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle("Observed Q99 number of introduced duplicates by team and repo", "Heatmap colored by row")
+)
+```
+```{r}
+pngsave("q99_introd_per_team_and_repo.png", p)
+```
+
+
+```{r}
+data |> group_by(repo, committerteam) |> select(committer) |> distinct() |> tally() |> ggplot(aes(x=committerteam, y=repo)) +
+    geom_tile(aes(fill=n)) +
+    geom_text(aes(label=n), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed number of committers by team and repo"))
+```
+```{r}
+data |> group_by(repo, authorteam) |> select(author) |> distinct() |> tally() |> ggplot(aes(x=authorteam, y=repo)) +
+    geom_tile(aes(fill=n)) +
+    geom_text(aes(label=n), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed number of authors by team and repo"))
+```
+
+The maximum number of introduced duplicates reveals that the Brown team, which also had high 95% value in the IntTest repo, also introduced 150 duplicates, the overall max value, to a single file in the integration test repository. 
+Overall, we see the pattern repeat:
+
+* Integration tests are highly likely to involve additions of duplicates
+* The architect team overall is highly unlikely to introduce any duplicates
+* There seems to be differences between teams in the numer of introduced duplicates, relative to their contributions. Differences between Red and Blue team, and also the Brown team stands out for introducing many duplicates in at least the integration test repository.
+
+```{r}
+#summary(data)
+
+data |> filter(INTROD >0) |> ggplot(aes(x=D, y=INTROD, color=C)) + geom_point()
+```
+
+```{r}
+data |> filter(INTROD >0) |> ggplot(aes(x=C, y=INTROD, color=D)) + geom_point()
+
+```
+
+Those plots show that complexity, rather than number of existing duplicates, are more linearly related to number of introduced duplicates.
+At the same time, complexity and existing duplicates are also related - it is just that even if DUP is zero, there is no strong evidence that INTROD is low or zero.
+
+```{r}
+data |> filter(INTROD>0) |> ggplot(aes(x=C, y=D, color=INTROD)) + geom_point()
+
+```
+
+```{r}
+data |> ggplot(aes(x=repo, y=ADD)) + geom_violin()
+data |> ggplot(aes(x=repo, y=ADD)) + geom_boxplot()
+
+```
+
+
+```{r}
+data |> ggplot(aes(x=repo, y=A)) + geom_violin()
+```
+```{r}
+data |> ggplot(aes(x=committerteam, y=A)) + geom_violin() + geom_boxplot(width=0.1)
+```
+```{r}
+data |> ggplot(aes(x=committerteam, y=A)) + geom_violin() +  stat_summary(fun.data=mean_sdl, mult=1, geom="pointrange", color="red")
+
+```
+
+Zero is here the population-level (total) average number of added lines. Some teams stand out, e.g. Brown team seems to add fewer lines, and the team with the Unknown authors are adding more. But, as can be expected, the team metrics vary across the global average.
+
+```{r}
+data |> ggplot(aes(x=repo, y=(1+ADD))) + geom_violin() + geom_boxplot(width=0.1) + scale_y_continuous(trans='log', breaks=c(5, 20, 100, 500, 1000, 3000)) + ylab("Added lines")
+
+```
+
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=(1+ADD))) + geom_violin() + geom_boxplot(width=0.1) + scale_y_continuous(trans='log', breaks=c(5, 20, 100, 500, 1000, 3000)) + ylab("Added lines")
+```
+
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=(1+DEL))) + geom_violin() + geom_boxplot(width=0.1) + scale_y_continuous(trans='log', breaks=c(5, 20, 100, 500, 1000, 3000)) + ylab("Deleted lines")
+
+```
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=(1+DUP))) + geom_violin() + geom_boxplot(width=0.1) + scale_y_continuous(trans='log', breaks=c(5, 20, 100, 500)) + ylab("Existing duplicates")
+
+```
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=(1+COMPLEX))) + geom_violin() + geom_boxplot(width=0.1) + scale_y_continuous(trans='log', breaks=c(5, 20, 100, 500, 1000)) + ylab("McCabe complexity")
+
+```
+
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=C)) + geom_violin() + geom_boxplot(width=0.1)
+
+```
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=D)) + geom_violin()
+
+```
+
+```{r}
+data |> ggplot(aes(x=committerteam, y=INTROD)) + geom_violin() + geom_boxplot(width=0.1)
+
+```
+
+# Unknown team, overall
+
+```{r}
+data |> group_by(committerteam) |> summarize(n=n()) |> mutate(frac=round(100*n/sum(n), 2))
+```
+
+```{r}
+data |> group_by(repo, committerteam) |> summarize(n=n()) |> mutate(frac=round(100*n/sum(n), 2)) |> arrange(desc(frac)) |> filter(committerteam == ARCH)
+
+```
+
+# Architect team
+
+```{r}
+summary(data)
+```
+
+```{r}
+data |> group_by(committerteam, REASON) |> summarize(n=n()) |> mutate(frac=n/sum(n))
+```
+
+```{r}
+data |> group_by(committerteam) |> summarize(added=median(ADD), removed=median(DEL), IQR(ADD), IQR(DEL))
+
+```
+
+
+```{r}
+data |> filter(repo == VENUS) |> group_by(committerteam) |> summarize(n(), added=median(ADD), removed=median(DEL), IQR(ADD), IQR(DEL), q99(ADD), q99(DEL), max(ADD))
+```
+
+```{r}
+data |> filter(repo == VENUS) |> group_by(committerteam) |> summarize(n(), median(INTROD), q95(INTROD), IQR(INTROD), q99(INTROD), max(INTROD))
+
+```
+
+# OCAM metrics 
+Data definition:
+
+ * churn: is the per-file-change max value of added and removed lines. So a file change with 2 added and 20 removed lines will have a churn value of 20.
+ * addcomplex: is the per-file-added McCabe complexity, or 0 in case the complexity of the file decreased due to the change.
+ * delcomplex: is the per-file-deleted McCabe complexity, or 0 in case the complexity of the file increased due to the change.
+ * commits: the number of unique commits made by the team
+ 
+ The above definition means that, at minimum, one of either addcomplex or delcomplex is zero, for any given file change. 
+ The only way for the churn value to be zero is if an empty file (containing no lines) was removed. This happens four times in the data set.
+ 
+```{r}
+source("ingest_data.R")
+ocam_data <- data
+#ocam_metrics(ocam_data) |> dplyr::filter(repo == INTTEST)
+
+(p <- ocam_rank_repo(ocam_metrics(ocam_data) |> dplyr::filter(repo == INTTEST)) + theme(legend.position = "none"))
+
+```
+ 
+ 
+```{r}
+ocam_data <- data
+(p <- ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == INTTEST)) + theme_bw() )
+figsave("ocam_inttest.pdf", p, width = 17.8, height=13)
+(p <- ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == JUPITER)) + theme_bw() )
+figsave("ocam_jupiter.pdf", p, width = 17.8, height=13)
+(p <- ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == SATURN)) + theme_bw() )
+figsave("ocam_saturn.pdf", p, width = 17.8, height=13)
+(p <- ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == URANUS)) + theme_bw() )
+figsave("ocam_uranus.pdf", p, width = 17.8, height=13)
+ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == NEPTUNE)) + theme_bw()
+ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == VENUS)) + theme_bw()
+(p <- ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == MARS))  + theme_bw())
+figsave("ocam_mars.pdf", p, width = 17.8, height=13)
+ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo == MERCURY)) + theme_bw()
+```
+```{r}
+library(cowplot)
+```
+
+```{r}
+(ocam_plot <- ocam_rank_repo(ocam_metrics(ocam_data) |> filter(repo %in% c(JUPITER, URANUS))) + theme_bw() + theme(legend.position = "none") + ylab(NULL)
+)
+figsave("ocam_jupiter_uranus.pdf", ocam_plot)
+
+```
+```{r}
+
+myrank <- function(df) {
+  df |> pivot_longer(cols=c("Grankcommits", "Frankchurn", "Erankaddcomplex", "Drankdelcomplex"), values_to = "metric") |> 
+    group_by(repo) |> ggplot(aes(x=committerteam, y=name)) + geom_tile(aes(fill=metric)) + facet_wrap(~ repo, ncol=1) + 
+    geom_text(aes(label=metric)) + xlab("team") + ylab("metric") + coord_fixed() + scale_y_discrete(labels=ocam_labels_plain) + 
+    scale_fill_gradient2(name="team rank", guide=guide_legend(reverse=T), midpoint=6, low = "#91BFDB", mid = "#FFFFBF", high = "#FC8D59")  + 
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.25)) + theme(legend.position = "none") #+ ggtitle(paste("OCAM rank for repo", repo$repo))
+}
+
+(ocam_jupiter <- myrank(ocam_metrics(ocam_data) |> filter(repo %in% c(JUPITER, URANUS))) + theme_bw() + theme(legend.position = "none") + ylab(NULL))
+
+
+
+```
+
+
+```{r}
+data |> filter(addedComplexity == 0, removedComplexity > 0)
+```
+
+## Conditional independencies
+
+We can test whether our data supports the conditional independencies implied by our DAG.
+
+COMP _||_ INTR | ADD, REM
+DUP _||_ INTR | ADD, REM
+DUP _||_ REM
+
+These would seem to imply that "knowing ADD and REM, makes INTROD and COMPLEX" independent (similar for DUP). Do our data support that claim?
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(y ~ 1 + A + C + R,
+              zi ~ 1 + A + C + R)
+get_prior(data=d,
+          family=zero_inflated_negbinomial,
+          formula=formula)
+```
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.25), class = b),
+            prior(normal(0, 0.5), class = Intercept, dpar=zi),
+            prior(normal(0, 0.25), class = b, dpar=zi),
+            prior(gamma(1, 1), class = shape))
+
+v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=zero_inflated_negbinomial)
+v
+```
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = zero_inflated_negbinomial,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+```
+
+```{r, eval=FALSE}
+summary(M_cond_ind)
+```
+
+All coefficients are != 0, which indicates some sort of dependency. Thus, we conclude that C and INTROD are not conditionally independent given ADD and DEL.
+
+### New DAG
+
+```{r}
+d <- data |> select(y=R,
+                    A=A,
+                    C=C,
+                    D=D,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(y ~ C)
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+```
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.25), class = b))
+
+v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+v
+```
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = gaussian,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+```
+
+```{r, eval=FALSE}
+summary(M_cond_ind)
+```
+
+Intercepts and slopes are estimated to be 0, implying conditional independence.
+
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(R ~ D)
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+
+```
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.25), class = b))
+
+v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+v
+```
+COMP _||_ DEL | TEAM
+DEL _||_ DUP | TEAM
+INTR _||_ TEAM | ADD, COMP, DEL, DUP
+
+## asdasd
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(C ~ R | team)
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+```
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(exponential(1), class = sigma),
+            prior(exponential(1), class = sd),
+            prior(lkj(2), class=cor)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+)
+```
+
+
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = gaussian,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      opencl = c(0,0),
+      adapt_delta = ADAPT_DELTA)
+```
+
+```{r, eval=FALSE}
+summary(M_cond_ind)
+```
+```{r, eval=FALSE}
+mcmc_areas_ridges(M_cond_ind, regex_pars = c("(^b_|^sd_|^cor|^sigma)")) + theme_bw()
+```
+```{r, eval=FALSE}
+mcmc_areas_ridges(M_cond_ind, regex_pars = c("(^r_team)")) + theme_bw()
+
+```
+
+```{r}
+
+```
+
+
+### new try
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(C ~ R + team)
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+```
+```{r, eval=FALSE}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.5), class = b),
+            prior(exponential(1), class = sigma)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+)
+
+```
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = gaussian,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      opencl = c(0,0),
+      adapt_delta = ADAPT_DELTA)
+
+```
+
+formula <- bf(C ~ R + team)
+Population-Level Effects: 
+            Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+Intercept      -0.13      0.02    -0.17    -0.08 1.00     2644     3897
+R              -0.01      0.01    -0.02     0.00 1.00    14359     8763
+teamBlue        0.04      0.03    -0.01     0.09 1.00     2819     4884
+teamBrown      -0.18      0.03    -0.24    -0.12 1.00     3472     5368
+teamGreen       0.19      0.03     0.13     0.24 1.00     3136     5141
+teamOrange      0.23      0.03     0.16     0.29 1.00     3481     6153
+teamPink        0.26      0.05     0.17     0.36 1.00     6156     7276
+teamRed         0.31      0.03     0.25     0.36 1.00     3099     4603
+teamUI          0.64      0.12     0.41     0.88 1.00    10512     8039
+teamUnknown    -0.19      0.05    -0.28    -0.10 1.00     5352     6718
+teamViolet      0.51      0.04     0.44     0.58 1.00     4159     7121
+teamYellow      0.08      0.03     0.02     0.14 1.00     3644     5944
+
+We are only really interested in population-level effects of R on C here. And this clearly shows that 0 is within the likely betas (-0.02 to 0)
+
+
+```{r}
+formula <- bf(D ~ R + team)
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+
+```
+
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.5), class = b),
+            prior(exponential(1), class = sigma)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+)
+```
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = gaussian,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      opencl = c(0,0),
+      adapt_delta = ADAPT_DELTA)
+summary(M_cond_ind)
+```
+
+There might be some weak correlation between DUP (D) and DEL (R) beta 0.12 and CI between 0.11 and 0.13
+
+INTR _||_ TEAM | ADD, COMP, DEL, DUP
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(y ~ A + R + C + D + team,
+              zi ~ A + R + C + D + team)
+get_prior(data=d,
+          family=zero_inflated_negbinomial,
+          formula=formula)
+
+```
+
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.5), class = b),
+            prior(gamma(0.1, 0.1), class = shape),
+            prior(normal(0, 0.5), class = Intercept, dpar=zi),
+            prior(normal(0, 0.5), class = b, dpar=zi)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=zero_inflated_negbinomial)
+)
+```
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = zero_inflated_negbinomial,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      opencl = c(0,0),
+      adapt_delta = ADAPT_DELTA)
+summary(M_cond_ind)
+
+```
+
+THe DAG where D influences R via a causal path has one conditional independence:
+    COMP ⊥ DEL | DUP, TEAM
+    
+```{r}
+formula <- bf(C ~ R + D + team)
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+
+```
+
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.5), class = b),
+            prior(exponential(1), class = sigma)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+)
+```
+
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = gaussian,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+summary(M_cond_ind)
+```
+
+```{r}
+formula <- bf(C ~ R + D + (1 + D | team))
+get_prior(data=d,
+          family=gaussian,
+          formula=formula)
+
+```
+
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.5), class = b),
+            prior(exponential(1), class = sigma),
+            prior(exponential(1), class = sd),
+            prior(lkj(2), class = cor)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=gaussian)
+)
+```
+```{r, eval=FALSE}
+M_cond_ind <-
+  brm(data = d,
+      family = gaussian,
+      file = ".cache/added-M_cond_ind",
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+summary(M_cond_ind)
+```
+
+
+
+```{r}
+d <- data |> select(y=INTROD,
+                    A=A,
+                    C=C,
+                    D=D,
+                    R=R,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(y ~ A + R + C + D + team + (1 | team),
+              zi ~ A + R + C + D + team + (1 | team))
+get_prior(data=d,
+          family=zero_inflated_negbinomial,
+          formula=formula)
+```
+
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.5), class = b),
+            prior(gamma(0.1, 0.1), class = shape),
+            prior(exponential(1), class = sd),
+            prior(normal(0, 0.5), class = Intercept, dpar=zi),
+            prior(normal(0, 0.5), class = b, dpar=zi),
+            prior(exponential(1), class = sd, dpar=zi)
+            )
+
+(v <- validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=zero_inflated_negbinomial)
+)
+```
+
+Small effect of DUP on REM (beta is 0.13) Is it visible in the plot?
+
+```{r}
+d |> ggplot(aes(x=R, y=C, color=D)) + geom_point() + geom_jitter()
+```
+
+```{r}
+d |> lm(formula = C ~ R + D)
+```
+
+```{r}
+d |> lm(formula = R ~ D)
+```
+
+
+
+# Team Blue
+
+```{r}
+(p <- data |> filter(committerteam == BLUE, ISTEST==F) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.03) + ggtitle(paste0("Introduced duplicates in non-test code by team ", BLUE)) )
+
+figsave("observed_nontest_blue.pdf", p)
+```
+
+```{r}
+(p <- data |> filter(committerteam == BLUE, ISTEST==T) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.03) + ggtitle(paste0("Introduced duplicates in test code by team ", BLUE)) )
+
+figsave("observed_test_blue.pdf", p)
+```
+
+
+```{r}
+(p <- data |> filter(committerteam == BLUE) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.03) + ggtitle(paste0("Introduced duplicates in repos by team ", BLUE)) )
+
+figsave("observed_blue.pdf", p)
+```
+
+```{r}
+data |> filter(committerteam == BLUE) |> group_by(repo, INTROD) |> summarize(count=n()) |> ungroup() |> mutate(rel = count/sum(count)) |> filter(INTROD==0) |> arrange(rel)
+
+(rf <- data |> filter(committerteam == BLUE) |> group_by(repo, INTROD) |> summarize(count=n()) |> ungroup() |> mutate(rel = count/sum(count)) |> filter(INTROD==1) |> arrange(rel) )
+sum(rf$rel)
+
+```
+
+
+
+```{r}
+data |> filter(committerteam == RED) |> group_by(repo, INTROD) |> summarize(count=n()) |> ungroup() |> mutate(rel = count/sum(count)) |> filter(INTROD==0) |> arrange(rel)
+
+(rf <- data |> filter(committerteam == RED) |> group_by(repo, INTROD) |> summarize(count=n()) |> ungroup() |> mutate(rel = count/sum(count)) |> filter(INTROD==1) |> arrange(rel) )
+sum(rf$rel)
+```
+
+```{r}
+(p <- data |> filter(committerteam == RED, ISTEST==F) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.025) + ggtitle(paste0("Introduced duplicates in non-test code by team ", RED)) )
+figsave("observed_nontest_red.pdf", p)
+```
+```{r}
+(p <- data |> filter(committerteam == RED, ISTEST==T) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.025) + ggtitle(paste0("Introduced duplicates in test code by team ", RED)) )
+figsave("observed_test_red.pdf", p)
+
+```
+
+
+
+```{r}
+(p <- data |> filter(committerteam == RED) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.025) + ggtitle(paste0("Introduced duplicates in repos by team ", RED)) )
+figsave("observed_red.pdf", p)
+```
+
+
+```{r}
+data |> filter(committerteam == GREEN) |> group_by(repo, INTROD) |> summarize(count=n()) |> ungroup() |> mutate(rel = count/sum(count)) |> filter(INTROD==0) |> arrange(rel)
+
+(rf <- data |> filter(committerteam == GREEN) |> group_by(repo, INTROD) |> summarize(count=n()) |> ungroup() |> mutate(rel = count/sum(count)) |> filter(INTROD==1) |> arrange(rel) )
+sum(rf$rel)
+```
+
+### Green
+
+```{r}
+(p <- data |> filter(committerteam == GREEN, ISTEST==F) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.05) )
+figsave("observed_nontest_green.pdf", p)
+```
+
+```{r}
+(p <- data |> filter(committerteam == GREEN, ISTEST==T) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.05) )
+figsave("observed_test_green.pdf", p)
+```
+
+
+```{r}
+(p <- data |> filter(committerteam == GREEN) |> ggplot(aes(x=INTROD, fill=repo)) + geom_histogram(aes(y=after_stat(count/sum(count))), binwidth = 1) + scale_y_continuous(labels=scales::percent) + ylim(0,0.05) )
+figsave("observed_green.pdf", p)
+```
+
+```{r}
+data |> filter(repo==MARS) |> group_by(committerteam, INTROD) |> summarize(count=n())
+```
+
+## IntTest and Arch
+
+is it true that they rarely introduce new files in IntTest?
+
+```{r}
+data |> filter(repo == INTTEST) |> group_by(committerteam, ISNEW) |> summarize(count=n(), pct=100*count/sum(count)) |> mutate(ratio=round(100*count/sum(count), 1))
+```
+
+```{r}
+(p <- data |> filter(repo == JUPITER) |> group_by(committerteam, DEL) |> ggplot(aes(x=DEL, fill=committerteam)) + geom_histogram(binwidth=30) + facet_wrap(~ committerteam) + scale_y_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 5000)) +
+ylab("log10(count)") + scale_fill_manual(values=COLOR_BY_TEAM) + theme_bw() + ggtitle("Deleted lines per team", "Jupiter repository") 
+)
+figsave("observed_deletions_jupiter.pdf", p)
+```
+
+```{r}
+data |> group_by(committerteam) |> ggplot(aes(x=committerteam, y=logCOMPLEX)) + geom_violin()
+```
+
+
+```{r}
+data |> filter(repo == JUPITER) |> ggplot(aes(y=logDEL, x=committerteam, fill=committerteam)) + geom_violin() + scale_fill_manual(values=COLOR_BY_TEAM) + theme_bw()
+```
+
+```{r}
+data |> filter(repo == JUPITER) |> ggplot(aes(y=A, x=committerteam, colour=committerteam)) + geom_violin() 
+```
+
+  Blue=rgb(31,120,180, maxColorValue = 255),
+  Brown=rgb(177,89,40, maxColorValue = 255),
+  Green=rgb(51,160,44, maxColorValue = 255),
+  Orange=rgb(255,127,0, maxColorValue = 255),
+  Pink=rgb(251,154,153, maxColorValue = 255),
+  QA=rgb(177,177,177, maxColorValue = 255),
+  Red=rgb(227,26,28, maxColorValue = 255),
+
+```{r}
+(p <- data |> mutate(team=committerteam) |> filter(repo %in% c(JUPITER, URANUS), team %in% c(RED, BLUE)) |> ggplot(aes(y=ADD, x=DEL, size=logCOMPLEX, colour=team, shape=team)) + geom_point() +
+#   scale_x_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) + scale_y_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) +
+   scale_color_manual(values=c(Blue=rgb(31,120,180,40, maxColorValue = 255), Red=rgb(227,26,28,40, maxColorValue = 255))) + scale_alpha(0.1) +  theme_bw() + facet_wrap(~repo)+ ggtitle("Added and changed lines per team and repo, sized by complexity of the file") + theme(legend.position="bottom") )
+figsave("observed_add_del_blue_red.pdf", p)
+```
+
+```{r}
+(p <- data |> mutate(team=committerteam) |> filter(repo %in% c(JUPITER, URANUS), team %in% c(RED, BLUE)) |> ggplot(aes(y=ADD, x=DEL, size=logCOMPLEX, colour=team, shape=team)) + geom_point() +
+   scale_x_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) + scale_y_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) +
+   scale_color_manual(values=c(Blue=rgb(31,120,180,40, maxColorValue = 255), Red=rgb(227,26,28,40, maxColorValue = 255))) +  theme_bw() + facet_wrap(~repo)+ ggtitle("Added and changed lines per team and repo, sized by complexity of the file") + theme(legend.position="bottom") )
+figsave("observed_add_del_blue_red.pdf", p)
+```
+
+```{r}
+(p <- data |> filter(repo %in% c(JUPITER, URANUS, MARS), committerteam %in% c(RED, BLUE, GREEN)) |> ggplot(aes(y=ADD, x=DEL, size=logCOMPLEX, colour=committerteam, shape=committerteam)) + geom_point() +
+   scale_x_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) + scale_y_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) +
+   scale_color_manual(values=c(Blue=rgb(31,120,180,40, maxColorValue = 255), Red=rgb(227,26,28,40, maxColorValue = 255), Green=rgb(51,160,44,40, maxColorValue = 255))) + scale_alpha(0.1) +  theme_bw() + facet_wrap(~repo)+ ggtitle("Added and changed lines per team and repo, sized by complexity of the file") )
+```
+```{r}
+data |> filter(repo == MARS, committerteam %in% c(BLUE, GREEN)) |> ggplot(aes(y=INTROD, x=ADD, colour=committerteam, size=COMPLEX)) + geom_point() +
+   scale_x_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) +
+   scale_color_manual(values=c(Blue=rgb(31,120,180,75, maxColorValue = 255), Red=rgb(227,26,28,40, maxColorValue = 255), Green=rgb(51,160,44,75, maxColorValue = 255))) + 
+  theme_bw() + ggtitle("Introduced duplicates per added lines, sized by complexity of the file", "Mars repository") 
+```
+
+```{r}
+data |> filter(repo == JUPITER, committerteam %in% c(BLUE, RED)) |> ggplot(aes(y=INTROD, x=ADD, colour=committerteam, size=COMPLEX)) + geom_point() +
+   scale_x_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) +
+   scale_color_manual(values=c(Blue=rgb(31,120,180,75, maxColorValue = 255), Red=rgb(227,26,28,40, maxColorValue = 255), Green=rgb(51,160,44,75, maxColorValue = 255))) + 
+  theme_bw() + ggtitle("Introduced duplicates per added lines, sized by complexity of the file", "Jupiter repository") 
+```
+
+```{r}
+data |> filter(repo == INTTEST, committerteam %in% c(BLUE, RED)) |> ggplot(aes(y=INTROD, x=ADD, colour=committerteam, size=COMPLEX)) + geom_point() +
+   scale_x_continuous(trans=scales::pseudo_log_trans(base = 10), breaks=c(1, 10,100,1000, 2000)) +
+   scale_color_manual(values=c(Blue=rgb(31,120,180,75, maxColorValue = 255), Red=rgb(227,26,28,40, maxColorValue = 255), Green=rgb(51,160,44,75, maxColorValue = 255))) + 
+  theme_bw() + ggtitle("Introduced duplicates per added lines, sized by complexity of the file", "Int.test repository") 
+
+```
+
+```{r}
+(p <- data |> filter(repo == URANUS, committerteam %in% c(RED, BLUE)) |> ggplot(aes(y=ADD, x=DEL, size=C, colour=committerteam)) + geom_point(position="jitter") + scale_color_manual(values=c(Blue=rgb(31,120,180,50, maxColorValue = 255), Red=rgb(227,26,28,50, maxColorValue = 255))) + scale_alpha(0.1) +  theme_bw() + ggtitle("Added and changed lines per team, sized by complexity of the file", "Uranus repository") )
+figsave("observed_add_del_blue_red_uranus.pdf", p)
+```
