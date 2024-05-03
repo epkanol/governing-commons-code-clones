@@ -41,7 +41,10 @@ cat(normalizePath(paste(getwd(), dirname(cachefile(MODEL_CACHE)), sep="/"), must
 
 The used cache directory can be controlled via the cache parameter to Rmd - it can be useful to experiment with this parameter if you Knit the document manually in RStudio.
 
-# Variation between teams, and between teams and repos
+# Using a narrower gamma prior
+
+We can experiment with a narrower shape prior by configuring it to (for instance) `gamma(0.1, 0.1)`, and running the full model based on this prior.
+The conclusions and tendencies should be the same, or similar, but the choice of prior might affect how fast the model converges, and if there are diagnostic problems (e.g. divergent transitions).
 
 ```{r}
 d <- data |> select(y=INTROD,
@@ -76,6 +79,10 @@ priors <- c(prior(normal(0, 0.5), class = Intercept),
 )
 ```
 
+The same structure as in $\mathcal{M}_4$, but a single prior is changed to `gamma(0.1, 0.1)`.
+
+## Prior Predictive Checks
+
 ```{r brms-ppc}
 M_ppc <- brm(data = d,
       family = zero_inflated_negbinomial,
@@ -105,9 +112,10 @@ yrep <- posterior_predict(m, newdata = d) # or nd
 ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0)) + ggtitle("Prior predicted proportion of zeros")
 ```
 
-### Max predicted value
+We see that the changed shape prior causes the model to be more skeptical of seeing duplicates---the most likely proportion of zeros in predicted data is now 1.0.
+But we also see that the model does allow between about 0.5--0.95 proportion of zeros, so the model does not rule out that duplicates appear.
 
-We had to adapt our priors quite significantly to get some realistic estimates.
+### Max predicted value
 
 ```{r ppc_max}
 (sim_max <- ppc_stat(y = d$y, yrep, stat = "max") + ggtitle("Prior predicted max values")
@@ -120,24 +128,25 @@ Scaling to more reasonable values
 sim_max + scale_x_continuous(limits = c(0,1000)) + ggtitle("Prior predicted max values up to 1000")
 ```
 
+The maximum predicted value is more spread out, compared to $\mathcal{M}_4$ (lower peak at 0, slightly higher distribution at 1000), but the overall distribution shape looks similar.
 
 ### 99th percentile
-
-The 99th percentile is a more stable metric than the maximum value for highly right-skewed data like ours.
-The priors do a good job of matching the observations.
 
 ```{r ppc_q99}
 ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Prior predicted Q99 vs. observed value")
 ```
 
-### 99th vs 95th percentile
+At the 99th percentile, we again see that this model is more skeptical of seeing duplicates.
+The most likely value includes zero.
 
-We can even plot the 95th percentile versus the 99th, just to show how the spread of likely values vary.
+### 99th vs 95th percentile
 
 ```{r ppc_2d}
 p <- ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + theme(legend.position="bottom") #+ ggtitle("Prior predicted Q95 vs Q99")
 p
 ```
+
+The 2-d plot confirms the conclusion---95th percentile now ranges to about 20, whereas $\mathcal{M}_4$ ranged to about 30.
 
 ### Standard deviation
 
@@ -150,27 +159,18 @@ But our prior information encompass the observed value well.
 ```
 
 Zooming in to show the distribution in more detail.
-Relative to the intercept model, this model has a slightly wider standard deviation range.
 
 ```{r}
 p + scale_x_continuous(limits=c(0,30))
 ```
 
+Lower peak at zero, thicker tail around 20--30.
+
 ### Group-level predictions
-
-We can use groups present in the data to show how predictions stack up to observations made per group.
-Here, beside showing the distribution, it is also important to consider the scale on the respective $x$-axis.
-Teams with few, and varied, observations (such as UI and Unknown) are more reliant on the priors, and will have a larger range of predictions.
-
 
 ```{r ppc_grouped_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per team")
 ```
-
-Plotting prior predictions per repo can show how our model compares relative to repo-level metrics.
-We see that Integration tests are a bit of an anomaly.
-Our model does not incorporate any repo-level group (only the team:repo-level grouping, that is, how each team behaves in a particular repo), so all predictions will follow the same distribution.
-Note how all $x$-axes are quite similar in scale (the difference comes from random variations, and differing number of data points arising from each reposiotory)
 
 ```{r ppc_grouped_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per repository")
@@ -217,6 +217,8 @@ lapply(plots, function(i) {
   })
 ```
 
+The "caterpillar plots" show that the chains mixed well also for this model.
+
 ```{r, rhat_neff}
 mcmc_plot(m, type="rhat")
 mcmc_plot(m, type="rhat_hist")
@@ -224,16 +226,18 @@ mcmc_plot(m, type="neff")
 mcmc_plot(m, type="neff_hist")
 ```
 
+Just as for $\mathcal{M}_4$, the MCMC chains, $\hat{R}$ and $N_{eff}$ ratio look good.
+
 ```{r plot_loo}
 loo <- loo(m)
 loo
 plot(loo)
 ```
 
-Wider priors mean more outliers-13 with these priors...
+There are 13 outlier points that need to be analysed (e.g. with reloo)
+(10 over 0.7 and 3 over 1.0)
 
-There are 11 outlier points that need to be analysed (e.g. with reloo)
-(7 over 0.7 and 4 over 1.0)
+Reloo is disabled by default, but could be enabled by setting the RELOO environment variable (which in turn will set the `reloo` parameter of this document.
 
 ```{r reloo, eval=params$reloo}
 reloofile <- cachefile(paste0("reloo-", MODEL_CACHE, ".rds"))
@@ -246,6 +250,10 @@ if (file.exists(reloofile)) {
     saveRDS(reloo, reloofile)
 }
 ```
+Note that the reloo results are cached, and included in the docker image by default.
+If you want to reproduce the reloo manually, set a separate cache dir (and mount it into the docker image), and enable the RELOO environment variable.
+It will take more than one day to complete all `reloo`, so it is best done over a weekend.
+
 ```{r plot_reloo, eval=params$reloo}
 # plotting the recalculated values
 plot(reloo)
@@ -254,6 +262,7 @@ influencers <- data[loo::pareto_k_ids(reloo),]
 influencers |> group_by(repo,committerteam) |> tally()
 ```
 
+According to the reloo function, all Pareto-k values are below 0.7, so we should be able to trust the model inferences.
 
 ## Posterior predictive checks
 
@@ -267,7 +276,7 @@ yrep <- posterior_predict(m)
 ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0))
 ```
 
-The distribution of zeros are spot-on.
+The distribution of zeros is marginally higher than the observed value, but it still encompasses the observed proportion.
 
 ### Posterior max value
 
@@ -280,11 +289,15 @@ The distribution of zeros are spot-on.
 sim_max + scale_x_continuous(limits = c(0,1000))
 ```
 
+The distribution of predicted max values, after training, for this model, is similar to the observed max value, but very similar to $\mathcal{M}_4$.
+
 ### Posterior standard distribution
 
 ```{r posterior_sd}
 ppc_stat(y = d$y, yrep, stat = "sd")
 ```
+
+Comparing the x-axis scale, we see that this model is expecting slightly lower standard deviation (range goes to 30 instead of 40, as for$\mathcal{M}_4$). 
 
 ### Posterior Q99
 
@@ -298,15 +311,16 @@ ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Posteri
 ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + ggtitle("Posterior predicted Q95 vs Q99")
 ```
 
+Identical to $\mathcal{M}_4$.
+
 ### Posterior grouped predictions
 
 ```{r posterior_max_by_team}
 ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$team) + ggtitle("Posterior predictive max observation per team")
 ```
 
-The max value per team varies between teams, but for most teams the observed value fall reasonably well within the predictions.
-Red team  is the exception.
-Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour will not be visible.
+Compared to $\mathcal{M}_4$, this model is more likely to predict lower number of duplicates.
+So the team predicted max values will, for the most part, be lower than for $\mathcal{M}_4$.
 
 ```{r posterior_max_per_repo}
 ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$repo) + ggtitle("Posterior predictive max observation per repo")
@@ -324,34 +338,25 @@ The 99th percentile value predictions seem very well fitted. Predictions surroun
 ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posterior predictive 99% quartile per repo")
 ```
 
-Rootogram, full scale
+### Rootogram
 
 ```{r rootogram}
 (rootogram <- pp_check(m, type = "rootogram", style="suspended")
 )
 ```
 
-Rootogram, sized according to reasonable (observed) values.
+We need to size the rootogram to see anything of value.
 
 ```{r}
 rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
 ```
 
-```{r}
-topleft=data.frame(x=c(0, 0),
-                   xend=c(17, 17), 
-                   y=c(35, -4),
-                   yend=c(22, 17))
-main.plot <- rootogram + scale_x_continuous(limits = c(0,50), breaks = seq(from=0, to=50, by=5)) + scale_y_continuous(limits = c(-4,35), breaks = c(-5, 0, 5, 10, 15, 20, 25, 30, 35)) + geom_text(x=1, y=35, label="b)") + theme(legend.position="bottom")
-inset.plot <- rootogram + theme(legend.position = "none") + scale_x_continuous(limits = c(0,150))  + geom_text(x=20, y=150, label="a)") + geom_rect(xmin=-3, xmax=50, ymin=-4, ymax=35, color="red", fill=NA)
-p <- ggdraw() + draw_plot(main.plot) + draw_plot(inset.plot, x=0.25, y=.5, width = 0.5, height = 0.5)
-p
-```
-
 
 ## Posterior predictions
 
-The posterior predictions in general work well. Though the single outlier in Saturn is not picked up (as most other changes there yield very few duplicates). Though our priors does allow the outliers to shine though, they do relegate them as very unlikely (most max predictions are in the 10s or 20s, most).
+The posterior predictions in general work well.
+Though the single outlier in Saturn is not picked up (as most other changes there yield very few duplicates).
+Though our priors does allow the outliers to shine though, they do relegate them as very unlikely (most max predictions are in the 10s or 20s, most).
 
 ```{r}
 source("predict_utils.R")
@@ -408,6 +413,8 @@ heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=quantile(da
 
 ```
 
+The various heatmaps all look similar to the findings from $\mathcal{M}_4$.
+
 ```{r}
 summary(m)
 ```
@@ -432,17 +439,11 @@ plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Blue", "J
 ```{r}
 (red_plot <- ggarrange(red_jupiter_plot, red_uranus_plot, common.legend = T, legend="bottom"))
 ```
-```{r}
-figsave("05_red_jupiter_uranus.pdf", red_plot)
-```
 
 ```{r}
 plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Green", "Jupiter", added=q99(data$ADD), removed=q95(data$DEL)), "Green", "Jupiter")
 ```
 
-```{r}
-
-```
 ```{r}
 (blue_jupiter_plot <- plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Blue", "Jupiter", added=q99(data$ADD), removed=q95(data$DEL)), "Blue", "Jupiter") + labs(title=NULL, subtitle=NULL) + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10)) + scale_y_continuous(limits=c(0,260)) + theme(legend.position = "none") + theme_bw()
 )
@@ -455,17 +456,11 @@ plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Green", "
 ```{r}
 (blue_plot <- ggarrange(blue_jupiter_plot, blue_uranus_plot, common.legend = T, legend="bottom"))
 ```
-```{r}
-figsave("05_blue_jupiter_uranus.pdf", blue_plot)
-```
 
 ```{r}
 (complexity_plot <- ggarrange(plotlist = list(blue_jupiter_plot, blue_uranus_plot, red_jupiter_plot, red_uranus_plot), labels="AUTO", nrow=2, ncol=2, common.legend = T, legend="bottom") 
  ) 
-figsave("05_blue_red_complexity.pdf", complexity_plot)
 ```
-
-
 
 ```{r}
 plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Uranus", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Uranus") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
@@ -495,6 +490,7 @@ plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Ma
 plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Red", "Mercury", added=q99(data$ADD), removed=q95(data$DEL)), "Red", "Mercury") + scale_x_continuous(limits=c(0,max(data$COMPLEX)+10))
 ```
 
+The conditional effects plot also all look similar to $\mathcal{M}_4$.
 
 ```{r}
 data |> filter(committerteam=="Blue", repo=="Uranus") |> group_by(INTROD) |> tally() |> arrange(desc(n))
@@ -541,31 +537,6 @@ teamArch <- condeffect_logADD_by_logCOMPLEX(m, d, "Arch", "Jupiter")
 ```{r}
 plot_logADD_by_logCOMPLEX(m, d, teamBlue)
 ```
-```{r}
-library(forcats)
-reloo_plot_logADD_by_logCOMPLEX <- function(reloo, someData, ftot, aTeam, aRepo) {
-  tmp <- bind_cols(someData, reloo$diagnostics) |> mutate(
-    truncC=factor(trunc(unscale_complexity(round(C)))), 
-    added=unscale_added(A), 
-    complexity=factor(trunc(unscale_complexity(round(C)))))
-  sorted_labels <- paste(sort(as.integer(levels(tmp$truncC))))
-  tmp$truncC <- factor(tmp$truncC, levels = sorted_labels)
-  tmp$complexity <- factor(tmp$complexity, levels = sorted_labels)
-  
-  observed <- tmp |> filter(team == aTeam, repo == aRepo)
-  
-  tmp <- ftot |> mutate(added=unscale_added(A),
-                        complexity=factor(trunc(unscale_complexity(as.integer(C))), levels=trunc(unscale_complexity(C)))) 
-  predicted <- tmp
-  return(predicted |> ggplot(aes(x=added)) +
-    geom_smooth(aes(y=Estimate, ymin=Q5.5, ymax=Q94.5, group=complexity, color=complexity), stat="identity", alpha=.25, linewidth=.5) +
-    geom_point(data=observed, aes(y=y, size = pareto_k, color=truncC), alpha=0.2) +
-      ggtitle(paste0("Conditional effects of team ", aTeam, " in repo ", aRepo))
-  )
-}
-# ! factor level [6] is duplicated
-#reloo_plot_logADD_by_logCOMPLEX(reloo, d, teamBlue, "Blue", "Jupiter")
-```
 
 ```{r}
 teamBlue |> mutate(added=unscale_added(A), complexity=factor(trunc(unscale_complexity(as.integer(C))))) |> select(complexity) |> summary()
@@ -602,18 +573,10 @@ plot_logADD_by_logCOMPLEX(m, d, teamUI)
 ```
 
 ```{r}
-(p <- mcmc_areas_ridges(m, regex_pars = c("^b_")) + theme_bw() + ggtitle("Population-level beta parameter distributions"))
-
-```
-
-
-
-```{r}
 (p <- mcmc_areas(m, regex_pars = c("^b_")) + theme_bw() + ggtitle("Population-level beta parameter distributions"))
 ```
-```{r}
-figsave("05_pop_level_betas.pdf", p)
-```
+
+Not surprising, the population-level betas are similar to $\mathcal{M}_4$.
 
 ```{r}
 mcmc_areas(m, regex_pars = c("^sd_"))
@@ -674,9 +637,7 @@ plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "N
 (p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Green", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,215))
 )
 ```
-```{r}
-figsave("05_condeffect_added_vs_complex_green_jupiter.pdf", p)
-```
+
 ```{r}
 (p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,250))
 )
@@ -687,10 +648,6 @@ figsave("05_condeffect_added_vs_complex_green_jupiter.pdf", p)
 (p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Red", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,250))
 )
 ```
-```{r}
-figsave("05_condeffect_added_vs_complex_red_jupiter.pdf", p)
-```
-
 
 ```{r}
 plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Jupiter", removed=200, duplicates=20)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) #+ scale_y_continuous(limits=c(0,175))
@@ -702,8 +659,6 @@ plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Red", "Ju
 ```{r}
 plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Blue", "Neptune", removed=200, complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) #+ scale_y_continuous(limits=c(0,175))
 ```
-
-
 
 ```{r}
 plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Red", "Neptune", removed=200, complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
@@ -718,8 +673,6 @@ jupiter_stats <- data |> filter(repo == "Jupiter") |> summarize(remQ95 = q95(DEL
 
 ```
 
-
-
 ```{r}
 plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Red", "Jupiter", removed=jupiter_stats$remQ95, complexity = jupiter_stats$compQ95)) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
 ```
@@ -731,7 +684,6 @@ plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Blue", "IntTest",
 ```{r}
 plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Red", "IntTest", removed=q95(data$DEL), complexity=q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
 ```
-
 
 ```{r}
 plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Brown", "IntTest")) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw()
@@ -774,6 +726,9 @@ plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Brown", "Jupiter"
 plot_logADD_by_logDUP(m, d, condeffect_logADD_by_logDUP(m, d, "Newbies", "Jupiter", removed=q95(data$DEL), complexity = q95(data$COMPLEX))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000))
 
 ```
+
+All the conditional effects plot are virtually the same for this model and $\mathcal{M}_4$.
+Which is natural, given that the posterior population-level predictors were having very similar distributions.
 
 ```{r}
 source("predict_utils.R")
