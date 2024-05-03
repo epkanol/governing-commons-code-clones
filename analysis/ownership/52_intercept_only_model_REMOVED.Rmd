@@ -1,0 +1,377 @@
+---
+title: "52 REMOVED Intercept-only model"
+author: "Anders Sundelin"
+date: "2023-03-09"
+output: html_document
+params: 
+    cache: "../.cache"
+    output: "../ownership/output"
+    reloo: FALSE
+    cores: 2
+    threads: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(dplyr)
+library(brms)
+library(bayesplot)
+library(patchwork)
+library(tidybayes)
+```
+
+```{r}
+set.seed(12345)
+source("ingest_data.R")
+MODEL_CACHE <- "removed-M_intercepts_only"
+```
+
+# Settings
+Models are stored in the following directory, which must exist prior to knitting this document:
+
+```{r}
+cat(normalizePath(paste(getwd(), dirname(cachefile(MODEL_CACHE)), sep="/"), mustWork = T))
+```
+
+The used cache directory can be controlled via the cache parameter to Rmd - it can be useful to experiment with this parameter if you Knit the document manually in RStudio.
+
+# Intercept-only model (baseline)
+
+The simplest possible model, only intercepts (on population, committerteam and team-in-repo level):
+
+This model assumes that each team-repository combination has a unique intercept, based on the population-level intercept, plus a team-level, and team-per-repo-level offset from that intercept.
+This model does not take into account any statistics about the actual change - it only assumes "when team T changes in repo R, then the likelihood of introducing duplicates are y".
+
+We use identical formulas and priors for the zero-inflation part of the equation (as the number of zeros dominate in the data).
+
+This is our formula, including the brms the default priors, which we will change below.
+
+```{r data-selection}
+d <- data |> select(y=REMOVED,
+                    team=committerteam,
+                    repo=repo)
+formula <- bf(y ~ 1 + (1 | team) + (1 | team:repo),
+              zi ~ 1 + (1 | team) + (1 | team:repo))
+get_prior(data=d,
+          family=zero_inflated_negbinomial,
+          formula=formula)
+```
+
+We adjust the priors accordingly:
+```{r prior-selection}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(weibull(2, .25), class = sd),
+            prior(normal(0, 0.5), class = Intercept, dpar=zi),
+            prior(weibull(2, 0.25), class = sd, dpar=zi),
+            prior(gamma(0.5, 0.1), class = shape))
+
+validate_prior(prior=priors,
+               formula=formula,
+               data=d,
+               family=zero_inflated_negbinomial)
+```
+
+Using the brms default shape prior (gamma(0.01,0.01)) shows that we get unreasonably many zeros, and the max observed value are also incredibly large (3e7 or more). 
+Because of this, we also have very few observations in the plausible range (1-1000 duplicates). 
+We also get some (1%) divergent transitions.
+Thus, we need to tighten that prior to some more realistic shape.
+After some experimenting, we arrive at gamma(1, 0.1) as a good compromise.
+
+## Prior Predictive Checks
+```{r ppc}
+M_ppc <- brm(data = d,
+      family = zero_inflated_negbinomial,
+      formula = formula,
+      prior = priors,
+      file = cachefile(paste0("ppc-",MODEL_CACHE)),
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      sample_prior = "only",
+      backend="cmdstanr",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+```
+```{r}
+m <- M_ppc
+```
+
+```{r prior_predict}
+yrep <- posterior_predict(m)
+```
+
+### Number of zeros
+
+We expect the number of zeros (changes that do not remove duplicates) to dominate, as this would probably be even rarer than clone introductions.
+
+```{r ppc_zeros}
+ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0)) + ggtitle("Prior predicted proportion of zeros")
+```
+
+Our prior for the zero-inflation are not particularly strong - but at least we assume that the overall ratio of zeros should be over half the changes - somewhat lower than the $\approx 95$% present in the data.
+
+### Max predicted value
+
+While our priors place the maximum likely value towards the lower end of the thousands, they do not rule out even 150 thousand duplicates in a single change (which we think is quite unrealistic).
+But it is important to allow some very unlikely values in the priors, because parameter space where prior information is zero will never show up in the posterior, even if it is present in the data (following Bayes' theorem).
+Thus, even though the priors show some unreasonable values, at least we know that if we ever see such data, our model will allow us to see it.
+
+```{r ppc_max}
+(sim_max <- ppc_stat(y = d$y, yrep, stat = "max") + ggtitle("Prior predicted max values")
+)
+```
+
+Scaling to more reasonable values show that our model actually expects somewhat smaller max values than observed, on average - but we see above that it does encompass also the observed max value, and quite a bit more range.
+
+```{r}
+sim_max + scale_x_continuous(limits = c(0,1000)) + ggtitle("Prior predicted max values up to 1000")
+```
+
+### 99th percentile
+
+The 99th percentile is a more stable metric than the maximum value for highly right-skewed data like ours.
+The priors do a good job of matching the observations.
+
+```{r ppc_q99}
+ppc_stat(y = d$y, yrep, stat = "q99") + ggtitle("Prior predicted Q99 vs. observed value")
+```
+
+
+### 99th vs 95th percentile
+
+We can even plot the 95th percentile versus the 99th, just to show how the spread of likely values vary.
+
+```{r ppc_2d}
+(p <- ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + theme(legend.position="bottom") + ggtitle("Prior predicted Q95 vs Q99")
+)
+```
+
+### Standard deviation
+
+The standard deviation of the predictions is a bit harder to grasp intuitively.
+But our prior information encompass the observed value well.
+
+```{r ppc_sd}
+(p <- ppc_stat(y = d$y, yrep, stat = "sd") + ggtitle("Prior predicted stddev vs. observed value")
+)
+```
+
+Zooming in to show the distribution in more detail.
+
+```{r}
+p + scale_x_continuous(limits=c(0,30))
+```
+
+### Group-level predictions
+
+We can use groups present in the data to show how predictions stack up to observations made per group.
+Here, beside showing the distribution, it is also important to consider the scale on the respective $x$-axis.
+Teams with few, and varied, observations (such as UI and Unknown) are more reliant on the priors, and will have a larger range of predictions.
+
+```{r ppc_grouped_team}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per team")
+```
+
+Plotting prior predictions per repo can show how our model compares relative to repo-level metrics.
+We see that Integration tests are a bit of an anomaly.
+Our model does not incorporate any repo-level group (only the team:repo-level grouping, that is, how each team behaves in a particular repo), so all predictions will follow the same distribution.
+Note how all $x$-axes are quite similar in scale (the difference comes from random variations, and differing number of data points arising from each reposiotory)
+
+```{r ppc_grouped_repo}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.position = "bottom") + ggtitle("Prior predictive Q99 observation per repository")
+```
+## Model execution
+
+```{r model_execution}
+MR_intercepts_only <-
+  brm(data = d,
+      family = zero_inflated_negbinomial,
+      file = cachefile(MODEL_CACHE),
+      formula = formula,
+      prior = priors,
+      warmup = 1000,
+      iter  = ITERATIONS,
+      chains = CHAINS,
+      cores = CORES,
+      backend="cmdstanr",
+      file_refit = "on_change",
+      threads = threading(THREADS),
+      save_pars = SAVE_PARS,
+      adapt_delta = ADAPT_DELTA)
+```
+
+```{r loo}
+MR_intercepts_only <- add_criterion(MR_intercepts_only, criterion = "loo")
+```
+
+```{r}
+m <- MR_intercepts_only
+```
+
+## Model diagnostics
+
+```{r mcmc_trace}
+p <- mcmc_trace(m)
+pars <- levels(p[["data"]][["parameter"]])
+plots <- seq(1, to=length(pars), by=12)
+lapply(plots, function(i) {
+  start <- i
+  end <- start+11
+  mcmc_trace(m, pars = na.omit(pars[start:end]))
+  })
+
+```
+
+The "caterpillar plots" show that the chains mixed well, and explored the available parameter space.
+
+```{r}
+mcmc_plot(m, type="rhat")
+mcmc_plot(m, type="rhat_hist")
+mcmc_plot(m, type="neff")
+mcmc_plot(m, type="neff_hist")
+```
+
+Both MCMC chains, Rhat and Neff ratio looks good.
+
+```{r plot_loo}
+loo <- loo(m)
+loo
+plot(loo)
+```
+
+We have 5 observations with high Pareto k values.
+These might be highly influential points, and should be investigated by the reloo function.
+This function will, in turn, exclude each suspicious data point, and refit the model, comparing the result with the original model).
+Most likely due to sparse data for some observations.
+
+If these calculations produce reasonable Pareto values (< 0.7), then we can still trust the results.
+Reloo is disabled by default, but could be enabled by changing the `eval` value of the cell
+
+```{r reloo, eval=params$reloo}
+reloofile <- cachefile(paste0("reloo-", MODEL_CACHE, ".rds"))
+if (file.exists(reloofile)) {
+    (reloo <- readRDS(reloofile))
+} else {
+    Sys.time()
+    (reloo <- reloo(m, loo, chains=CHAINS, cores=CORES) )
+    Sys.time()
+    saveRDS(reloo, reloofile)
+}
+```
+Doing the reloo takes several hours, so it is best done manually (e.g over night).
+```{r plot_reloo, eval=params$reloo}
+# plotting the recalculated values
+plot(reloo)
+# which points have higher pareto_k than 0.5?
+influencers <- data[loo::pareto_k_ids(reloo),]
+influencers |> group_by(repo,committerteam) |> tally()
+```
+
+## Posterior predictive checks
+
+```{r posterior_predict}
+yrep <- posterior_predict(m)
+```
+
+### Posterior proportion of zeros
+
+```{r post_zeros}
+ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0)) + ggtitle("Posterior predicted proportion of zeros")
+```
+
+The distribution of zeros are spot-on.
+
+### Posterior max value
+
+```{r post_max}
+sim_max <- ppc_stat(y = d$y, yrep, stat = "max") + ggtitle("Posterior predicted max value")
+sim_max
+```
+
+The most likely posterior max value is slightly below 100, and the observed value (from IntTest repository) is around 150.
+But our priors are not too strong, our models place some probability up to a few hundred clones.
+This means that we could trust that our model, in case such data should show up, will consider that data as well.
+
+### Posterior standard distribution
+
+```{r post_sd}
+ppc_stat(y = d$y, yrep, stat = "sd") + ggtitle("Posterior predicted standard deviation")
+```
+
+Most of the probability mass are between 1.1nd 2 in standard deviation, slightly below the observed value.
+
+### Posterior Q95 vs Q99
+
+```{r}
+ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + ggtitle("Posterior predicted Q95 vs Q99")
+```
+
+The model converges very well around the posterior observation of 1 as 95th percentile, and 5 as 99th percentile, while still allowing between 4 and 7 as 99th percentile.
+
+### Posterior grouped predictions
+
+```{r posterior_max_by_team}
+ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$team) + ggtitle("Posterior predictive max observation per team")
+```
+
+The max value per team varies between teams, but for most teams the observed value fall reasonably well within the predictions.
+Red team  is the exception.
+Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour will not be visible.
+
+```{r posterior_max_per_repo}
+ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$repo) + ggtitle("Posterior predictive max observation per repo")
+```
+
+Posterior max per repository have some variation, in particular in Saturn and Jupiter.
+
+```{r posterior_q99_by_team}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quantile per team")
+```
+
+The 99th quantile are more stable metrics than the max value.
+The UI team shows that they are more reliant on priors (have a much wider $x$ axis range in their predictions)
+
+
+```{r posterior_q99_per_repo}
+ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posterior predictive 99% quantile per repo")
+```
+
+Similar conclusions for the 99th quantile per repository.
+
+Rootogram, full scale
+
+```{r rootogram}
+rootogram <- pp_check(m, type = "rootogram", style="suspended")
+rootogram
+```
+Rootogram, sized according to reasonable (observed) values.
+
+```{r}
+p <- rootogram + scale_x_continuous(limits=c(0,50)) + scale_y_continuous(limits=c(-3,30)) + ggtitle("Suspended rootogram, y=0 removed, x scaled to 0-50 prediction interval")
+p
+```
+
+```{r}
+source("predict_utils.R")
+```
+
+```{r 99th-quantile-by-team-and-repo}
+# the predict functions use predictors, so we have to supply them. But this model do not consider these values, only the team and the repository, and the intercept
+heatmap_by_team_and_repo(posterior_predict_by_team_and_repo(m, added=q95(data$ADD), removed=q95(data$DEL), complexity=q95(data$COMPLEX), duplicates = q95(data$DUP), summary=function(x) q99(x)), "Quantile 99%", decimals=0) + ggtitle("Quantile 99% per team and repo")
+```
+
+```{r}
+removals_probability(onepred(model=MR_intercepts_only))
+```
+
+Apart from the Integration Test, and to some extent Neptune, this model does not really make much difference between teams in the various repositories.
+
+## Conclusion
+
+Our model converges well, but is limited in its predictive capabilities.
+It will be used as a baseline model.

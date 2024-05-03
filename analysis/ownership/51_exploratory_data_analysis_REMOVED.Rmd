@@ -1,0 +1,128 @@
+---
+title: "51 Exploratory Data Analysis - REMOVED clones"
+author: "Anders Sundelin"
+date: "2023-03-18"
+output: html_document
+params: 
+    cache: "../ownership/.cache"
+    output: "../ownership/output"
+    reloo: FALSE
+    cores: 2
+    threads: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(GGally)
+library(tidyr)
+library(brms)
+library(bayesplot)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+options(dplyr.summarise.inform = FALSE)
+```
+
+## Exploring how much duplicates that are removed by teams
+
+```{r ingest data}
+source("ingest_data.R")
+levels(data$repo)
+levels(data$committerteam)
+levels(data$authorteam)
+```
+
+# Exploratory Data Analysis
+
+We see that duplicates are rarely removed - the 95th percentile is 0.
+
+```{r}
+data |> summarize(min(REMOVED), median(REMOVED), q95(REMOVED), q99(REMOVED), max(REMOVED))
+```
+
+But there are still changes when teams remove duplicates---some teams more than others. And some removals are large - even though most are small.
+
+```{r}
+data |> filter(REMOVED > 0) |> group_by(committerteam, REMOVED) |> tally()
+```
+
+Most of the introduced duplicates are small (single-digits), but some are large, ranging into the hundreds for the IntTest repo.
+
+```{r}
+changesPerRepoAndTeam <- data |> group_by(repo, committerteam) |> summarise(fileschanged=n())
+zerosPerRepoAndTeam <- data |> filter(REMOVED == 0) |> group_by(repo, committerteam) |> summarise(zeros=n())
+zeros_ratio <- merge(changesPerRepoAndTeam, zerosPerRepoAndTeam) |> mutate(removedRatio = 1-(zeros/fileschanged)) |> arrange(removedRatio)
+
+(p <- zeros_ratio |> filter(committerteam != "Unknown") |> ggplot(aes(x=committerteam, y=removedRatio, color=committerteam, size=fileschanged)) + geom_point() + facet_wrap(~ repo) + xlab("team") + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + scale_y_continuous(limits=c(0,0.25)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+)
+```
+
+```{r}
+plot_REMOVED_issues_in_repo <- function(aRepo, team_selector) {
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=REMOVED, color=team, fill=team)) + geom_histogram(aes(y=..density..), position = "dodge", binwidth = 1) + ggtitle(paste("REMOVED duplicates in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("proportion of filechanges") + xlab("Number of duplicates REMOVED in the change") + ylim(0,0.1)
+}
+three_teams <- function(x) x %in% c(RED, BLUE, GREEN)
+
+plot_REMOVED_issues_in_repo(JUPITER, three_teams) + theme_bw() + ylim(0,0.045)
+```
+
+```{r}
+plot_REMOVED_issues_in_repo(MARS, three_teams) + theme_bw() + ylim(0,0.045)
+```
+```{r}
+plot_REMOVED_issues_in_repo(URANUS, three_teams) + theme_bw() + ylim(0,0.045)
+```
+
+```{r}
+# quantile type 3 to avoid having interpolation of the observations
+repo_committerteam <- data |> group_by(repo, committerteam) |> summarize(q95=quantile(REMOVED, 0.95, type=3),
+                                                                         q99=quantile(REMOVED, 0.99, type=3),
+                                                                         max=max(REMOVED),
+                                                                         files=n(),
+                                                                         mean_added=mean(ADD),
+                                                                         median_added=median(ADD),
+                                                                         mean_removed=mean(DEL),
+                                                                         median_removed=median(DEL)) |> mutate(team=committerteam)
+```
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=q95)) +
+    geom_text(aes(label=round(q95, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed 95% REMOVED clones by team and repo"))
+```
+
+The 95% quantile plots show that for many repos, and many teams in those repos, in 19 out of 20 file changes, no duplicates were added. The outlier is INTTEST, where many teams can be expected to REMOVEDuce single-digit duplicates. In the NEPTUNE repository, we also can expect some more duplicate REMOVEDuction than in the others.
+
+```{r}
+repo_committerteam |> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=q99)) +
+    geom_text(aes(label=round(q99, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed 99% REMOVED clones by team and repo"))
+
+```
+
+The pattern repeats for the 99% quantile. Integration test can be expected to have more duplicates REMOVEDuced, and in particular the Brown team stands out.
+In the Neptune repo, however, it is the Blue and Green teams that are a bit more likely to REMOVEDuce duplicates.
+
+
+```{r}
+repo_committerteam|> ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=max)) +
+    geom_text(aes(label=round(max, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle(paste("Observed max number of REMOVED duplicates by team and repo"))
+```
+```{r}
+repo_committerteam_summary <- repo_committerteam |> mutate(max=replace_na(max, 0)) |> group_by(repo) |> summarize(mx=max(max), mn=min(max))
+(p <- repo_committerteam |> inner_join(repo_committerteam_summary) |> mutate(p=(max - mn)/(mx-mn)) |> 
+  ggplot(aes(x=team, y=repo)) +
+    geom_tile(aes(fill=p)) +
+    geom_text(aes(label=round(max, 0)), color="white") +
+    xlab("team") + ylab("repo") +
+    ggtitle("Observed max number of REMOVED duplicates by team and repo", "Heatmap colored by row") 
+)
+```
