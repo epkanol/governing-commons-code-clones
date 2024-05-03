@@ -1,5 +1,5 @@
 ---
-title: "04 Full Model with grouped intercept, R, D and C"
+title: "05 Full Model with narrower prior"
 author: "Anders Sundelin"
 date: "2023-03-19"
 output: html_document
@@ -29,7 +29,7 @@ options(dplyr.summarise.inform = FALSE)
 ```{r}
 set.seed(12345)
 source("ingest_data.R")
-MODEL_CACHE <- "added-M_pop_A_team_team_repo_RDC_zi_sd025_gamma05"
+MODEL_CACHE <- "added-M_pop_A_team_team_repo_RDC_zi_sd025_gamma01"
 ```
 
 # Settings
@@ -67,7 +67,7 @@ priors <- c(prior(normal(0, 0.5), class = Intercept),
             prior(normal(0, 0.25), class = b, dpar=zi),
             prior(weibull(2, 0.25), class = sd, dpar=zi),
             prior(weibull(2, 0.25), class = sd, group=team:repo, dpar=zi),
-            prior(gamma(0.5, 0.1), class = shape))
+            prior(gamma(0.1, 0.1), class = shape))
 
 (v <- validate_prior(prior=priors,
                formula=formula,

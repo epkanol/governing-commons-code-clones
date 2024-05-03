@@ -236,13 +236,23 @@ plot(loo)
 There are 8 outlier points that need to be analysed (e.g. with reloo)
 
 ```{r reloo, eval=params$reloo}
-Sys.time()
-(reloo <- reloo(m, loo, chains=CHAINS, cores=CORES)
-)
-Sys.time()
-saveRDS(reloo, cachefile(paste0("reloo-", MODEL_CACHE, ".rds")))
+reloofile <- cachefile(paste0("reloo-", MODEL_CACHE, ".rds"))
+if (file.exists(reloofile)) {
+    (reloo <- readRDS(reloofile))
+} else {
+    Sys.time()
+    (reloo <- reloo(m, loo, chains=CHAINS, cores=CORES) )
+    Sys.time()
+    saveRDS(reloo, reloofile)
+}
 ```
-
+```{r plot_reloo, eval=params$reloo}
+# plotting the recalculated values
+plot(reloo)
+# which points have higher pareto_k than 0.5?
+influencers <- data[loo::pareto_k_ids(reloo),]
+influencers |> group_by(repo,committerteam) |> tally()
+```
 ## Posterior predictive checks
 
 ```{r posterior_predict}

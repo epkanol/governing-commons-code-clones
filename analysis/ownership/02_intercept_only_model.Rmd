@@ -252,14 +252,24 @@ If these calculations produce reasonable Pareto values (< 0.7), then we can stil
 Reloo is disabled by default, but could be enabled by changing the `eval` value of the cell
 
 ```{r reloo, eval=params$reloo}
-Sys.time()
-(reloo <- reloo(m, loo, chains=CHAINS, cores=CORES)
-)
-Sys.time()
-saveRDS(reloo, cachefile(paste0("reloo-", MODEL_CACHE, ".rds")))
+reloofile <- cachefile(paste0("reloo-", MODEL_CACHE, ".rds"))
+if (file.exists(reloofile)) {
+    (reloo <- readRDS(reloofile))
+} else {
+    Sys.time()
+    (reloo <- reloo(m, loo, chains=CHAINS, cores=CORES) )
+    Sys.time()
+    saveRDS(reloo, reloofile)
+}
 ```
 Doing the reloo takes several hours, so it is best done manually (e.g over night).
-
+```{r plot_reloo, eval=params$reloo}
+# plotting the recalculated values
+plot(reloo)
+# which points have higher pareto_k than 0.5?
+influencers <- data[loo::pareto_k_ids(reloo),]
+influencers |> group_by(repo,committerteam) |> tally()
+```
 
 ## Posterior predictive checks
 
