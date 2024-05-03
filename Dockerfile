@@ -49,17 +49,23 @@ COPY renv.lock /home/app/renv.lock
 RUN chown -R app:app /home/app/renv.lock
 USER app
 RUN R -e "renv::restore()"
-RUN R -e 'install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")), version="2.34.1")'
-RUN R -e 'cmdstanr::install_cmdstan(version="2.34.1")'
+RUN R -e 'install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")), version="2.33.1")'
+RUN R -e 'cmdstanr::install_cmdstan(version="2.33.1")'
 
 # source code changes here, after building the R image incl. renv packages and Stan
 USER root
 COPY analysis/ownership /home/app/analysis
 RUN chown -R app:app /home/app/analysis
 
+COPY analysis/render_all.sh /home/app
+RUN chown app:app /home/app/render_all.sh
+RUN chmod u+x /home/app/render_all.sh
+
 USER app
+# default destinations
 RUN mkdir -p /home/app/ownership/.cache
+RUN mkdir -p /home/app/ownership/output
 
 # RMarkdown defaults to use the parent directory of the Rmd as PWD, so paths inside the Rmd should be relative to this.
 # However, the output_dir parameter itself is relative to the docker root (WORKDIR above)
-CMD ["R", "-e", "rmarkdown::render('analysis/01_exploratory_data_analysis.Rmd', output_dir='ownership/output')" ]
+CMD ["/home/app/render_all.sh" ]
