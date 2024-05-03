@@ -6,6 +6,7 @@ output: html_document
 params: 
     cache: "../ownership/.cache"
     output: "../ownership/output"
+    reloo: FALSE
 ---
 
 ```{r setup, include=FALSE}
@@ -64,30 +65,6 @@ In this equation, $added$, $complexity$ and $duplicates$ are on their natural sc
 
 Depending on which parameters we include in the group-level effect, the exponent will change accordingly (hence the $i$ in $\beta_{0,i}$ for the model where only the intercept changes per team and repo).
 The other parameters, $\hat{\mu_\alpha}$ and $\hat{\sigma_\alpha}$, et al. are just normalizing constants, defined as the mean and standard deviation of the logarithm of the corresponding metric count.
-```{r}
-INTTEST <- "IntTest"
-JUPITER <- "Jupiter"
-MARS <- "Mars"
-MERCURY <- "Mercury"
-NEPTUNE <- "Neptune"
-SATURN <- "Saturn"
-URANUS <- "Uranus"
-VENUS <- "Venus"
-
-ARCH <- "Arch"
-BLUE <- "Blue"
-BROWN <- "Brown"
-GREEN <- "Green"
-NEWTEAM <- "NewTeam"
-ORANGE <- "Orange"
-PINK <- "Pink"
-RED <- "Red"
-UI <- "UI"
-UNKNOWN <- "Unknown"
-VIOLET <- "Violet"
-YELLOW <- "Yellow"
-
-```
 
 ```{r ingest data}
 source("ingest_data.R")

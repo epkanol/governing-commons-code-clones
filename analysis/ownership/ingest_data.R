@@ -16,7 +16,27 @@
 # ADAPT_DELTA
 # SAVE_PARS
 
+INTTEST <- "IntTest"
+JUPITER <- "Jupiter"
+MARS <- "Mars"
+MERCURY <- "Mercury"
+NEPTUNE <- "Neptune"
+SATURN <- "Saturn"
+URANUS <- "Uranus"
+VENUS <- "Venus"
 
+ARCH <- "Arch"
+BLUE <- "Blue"
+BROWN <- "Brown"
+GREEN <- "Green"
+NEWTEAM <- "NewTeam"
+ORANGE <- "Orange"
+PINK <- "Pink"
+RED <- "Red"
+UI <- "UI"
+UNKNOWN <- "Unknown"
+VIOLET <- "Violet"
+YELLOW <- "Yellow"
 
 df <- read.csv("samples/authors-team-impact.csv") |> mutate(repo=as.factor(repo), 
                                                             commit=as.factor(commitid),
@@ -111,13 +131,13 @@ COLOR_BY_TEAM <- c(
   Pink=rgb(251,154,153, maxColorValue = 255),
   QA=rgb(177,177,177, maxColorValue = 255),
   Red=rgb(227,26,28, maxColorValue = 255),
-  TestArch=rgb(153,153,153, maxColorValue = 255),
+  TestArch=rgb(202,178,214, maxColorValue = 255),
   UI=rgb(253,191,111, maxColorValue = 255),
   UX=rgb(178,223,138, maxColorValue = 255),
   Violet=rgb(106,61,154, maxColorValue = 255),
   Yellow=rgb(255,237,111, maxColorValue = 255),
   Unknown=rgb(202,178,214, maxColorValue = 255),
-  NewTeam=rgb(202,178,214, maxColorValue = 255)
+  NewTeam=rgb(80,80,80, maxColorValue = 255)
   )
 
 

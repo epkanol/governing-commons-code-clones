@@ -6,6 +6,7 @@ output: html_document
 params: 
     cache: "../.cache"
     output: "../ownership/output"
+    reloo: FALSE
 ---
 
 ```{r setup, include=FALSE}
@@ -22,7 +23,17 @@ library(patchwork)
 ```{r}
 set.seed(12345)
 source("ingest_data.R")
+MODEL_CACHE <- "added-M_intercepts_only"
 ```
+
+# Settings
+Models are stored in the following directory, which must exist prior to knitting this document:
+
+```{r}
+cat(normalizePath(paste(getwd(), dirname(cachefile(MODEL_CACHE)), sep="/"), mustWork = T))
+```
+
+The used cache directory can be controlled via the cache parameter to Rmd - it can be useful to experiment with this parameter if you Knit the document manually in RStudio.
 
 # Intercept-only model (baseline)
 
@@ -72,6 +83,7 @@ M_ppc <- brm(data = d,
       family = zero_inflated_negbinomial,
       formula = formula,
       prior = priors,
+      file = cachefile(paste0("ppc-",MODEL_CACHE)),
       warmup = 1000,
       iter  = ITERATIONS,
       chains = CHAINS,
@@ -176,7 +188,7 @@ ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + theme(legend.pos
 M_intercepts_only <-
   brm(data = d,
       family = zero_inflated_negbinomial,
-      file = cachefile("added-M_intercepts_only"),
+      file = cachefile(MODEL_CACHE),
       formula = formula,
       prior = priors,
       warmup = 1000,
@@ -237,9 +249,12 @@ Most likely due to sparse data for some observations.
 If these calculations produce reasonable Pareto values (< 0.7), then we can still trust the results.
 Reloo is disabled by default, but could be enabled by changing the `eval` value of the cell
 
-```{r, eval=FALSE}
-reloo <- reloo(m, loo, chains=CHAINS)
-reloo
+```{r, eval=param$reloo}
+Sys.time()
+(reloo <- reloo(m, loo, chains=CHAINS, cores=CORES)
+)
+Sys.time()
+saveRDS(reloo, cachefile(paste0("reloo-", MODEL_CACHE, ".rds")))
 ```
 Doing the reloo takes several hours, so it is best done manually (e.g over night).
 
