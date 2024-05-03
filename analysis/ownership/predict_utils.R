@@ -124,3 +124,8 @@ more_five_probability <- function(predictions) {
   predictions |> ggplot(aes(x=team, y=pred5/100, color=team)) + geom_boxplot() + facet_wrap(~ repo) + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + ggtitle("Probability of more than five duplicates per team and repository", paste("added", params$added, "removed", params$removed, "complexity", params$complexity, "duplicates", params$duplicates)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("P(INTROD > 5)")
 }
 
+removals_probability <- function(predictions) {
+  params = predictions |> select(added, removed, complexity, duplicates) |> distinct()
+  stopifnot(length(params$added) == 1)
+  predictions |> ggplot(aes(x=team, y=pred0/100, color=team)) + geom_boxplot() + facet_wrap(~ repo) + scale_color_manual(values=COLOR_BY_TEAM) + theme_bw() + ggtitle("Probability of clone removal, per team and repository") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("P(REMOVED > 0)")
+}

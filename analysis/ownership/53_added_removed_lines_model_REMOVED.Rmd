@@ -220,6 +220,8 @@ lapply(plots, function(i) {
   })
 ```
 
+We see that certain chains did not converge properly.
+
 ```{r, rhat_neff}
 mcmc_plot(m, type="rhat")
 mcmc_plot(m, type="rhat_hist")
@@ -227,110 +229,13 @@ mcmc_plot(m, type="neff")
 mcmc_plot(m, type="neff_hist")
 ```
 
+And also that some $\hat{R}$ values are much higher than 1.
+
+This means that the model did not converge properly, and we should not trust the posterior predictions.
+
 ```{r plot_loo}
 loo <- loo(m)
 loo
 plot(loo)
 ```
 
-There are 8 outlier points that need to be analysed (e.g. with reloo)
-
-```{r reloo, eval=params$reloo}
-reloofile <- cachefile(paste0("reloo-", MODEL_CACHE, ".rds"))
-if (file.exists(reloofile)) {
-    (reloo <- readRDS(reloofile))
-} else {
-    Sys.time()
-    (reloo <- reloo(m, loo, chains=CHAINS, cores=CORES) )
-    Sys.time()
-    saveRDS(reloo, reloofile)
-}
-```
-```{r plot_reloo, eval=params$reloo}
-# plotting the recalculated values
-plot(reloo)
-# which points have higher pareto_k than 0.5?
-influencers <- data[loo::pareto_k_ids(reloo),]
-influencers |> group_by(repo,committerteam) |> tally()
-```
-## Posterior predictive checks
-
-```{r posterior_predict}
-yrep <- posterior_predict(m)
-```
-
-### Posterior proportion of zeros
-
-```{r posterior_zeros}
-ppc_stat(y = d$y, yrep, stat = function(y) mean(y == 0))
-```
-
-The distribution of zeros are spot-on.
-
-### Posterior max value
-
-```{r posterior_max}
-(sim_max <- ppc_stat(y = d$y, yrep, stat = "max")
-)
-```
-
-```{r}
-sim_max + scale_x_continuous(limits = c(0,1000))
-```
-
-### Posterior standard distribution
-
-```{r posterior_sd}
-ppc_stat(y = d$y, yrep, stat = "sd")
-```
-
-### Posterior Q99
-
-```{r posterior_q99}
-ppc_stat(y = d$y, yrep, stat = function(y) quantile(y, 0.99)) + ggtitle("Posterior predicted Q99")
-```
-
-### Posterior Q95 vs Q99
-
-```{r posterior_q95_vs_q99}
-ppc_stat_2d(d$y, yrep, stat = c("q95", "q99")) + ggtitle("Posterior predicted Q95 vs Q99")
-```
-
-### Posterior grouped predictions
-
-```{r posterior_max_by_team}
-ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$team) + ggtitle("Posterior predictive max observation per team")
-```
-
-The max value per team varies between teams, but for most teams the observed value fall reasonably well within the predictions.
-Red team  is the exception.
-Remember, this model does not take any numerical predictor (such as size of the change) into account, so different team behaviour will not be visible.
-
-```{r posterior_max_per_repo}
-ppc_stat_grouped(y = d$y, yrep, stat = "max", group = d$repo) + ggtitle("Posterior predictive max observation per repo")
-```
-
-Posterior max per repository have some variation, in particular in Saturn and Jupiter.
-
-```{r posterior_q99_by_team}
-ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quartile per team")
-```
-
-The 99th percentile value predictions seem very well fitted. Predictions surround the observation nicely.
-
-```{r posterior_q99_by_repo}
-ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$repo) + ggtitle("Posterior predictive 99% quartile per repo")
-```
-
-Rootogram, full scale
-
-```{r rootogram}
-(rootogram <- pp_check(m, type = "rootogram", style="suspended")
-)
-```
-
-Rootogram, sized according to reasonable (observed) values.
-
-```{r}
-rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
-```

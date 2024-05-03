@@ -76,6 +76,12 @@ ppc_M2 <- readRDS(ppc_M2_f)
 M0 <- readRDS(cachefile(M0_file))
 M1 <- readRDS(cachefile(M1_file))
 M2 <- readRDS(cachefile(M2_file))
+
+RM0_file <- "removed-M_intercepts_only.rds"
+stopifnot(file.exists(cachefile(RM0_file)))
+
+RM0 <- readRDS(cachefile(RM0_file))
+
 ```
 
 ```{r loo}
@@ -322,5 +328,11 @@ figsave("99-predicted_median_vs_q95.pdf", p)
 ```
 
 ## Figure 13 - Removals
+
+As the model has no predictors, just intercepts, it does not matter what values are used. But our onepred function will use them anyway, with the default values, so the data frame will include them. But they are not used to make inferences.
+
+```{r}
+removals_probability(onepred(model=RM0)) + ggtitle(label=NULL, subtitle=NULL)
+```
 
 To be done
