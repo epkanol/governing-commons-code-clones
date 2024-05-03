@@ -337,11 +337,6 @@ Rootogram, sized according to reasonable (observed) values.
 rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
 ```
 
-```{r rootogram}
-rootogram <- pp_check(m, type = "rootogram", style="suspended")
-rootogram
-```
-
 ```{r}
 topleft=data.frame(x=c(0, 0),
                    xend=c(17, 17), 
@@ -438,7 +433,7 @@ plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Blue", "J
 (red_plot <- ggarrange(red_jupiter_plot, red_uranus_plot, common.legend = T, legend="bottom"))
 ```
 ```{r}
-figsave("red_jupiter_uranus.pdf", red_plot)
+figsave("05_red_jupiter_uranus.pdf", red_plot)
 ```
 
 ```{r}
@@ -461,13 +456,13 @@ plot_logCOMPLEX_by_logDUP(m, d, condeffect_logCOMPLEX_by_logDUP(m, d, "Green", "
 (blue_plot <- ggarrange(blue_jupiter_plot, blue_uranus_plot, common.legend = T, legend="bottom"))
 ```
 ```{r}
-figsave("blue_jupiter_uranus.pdf", blue_plot)
+figsave("05_blue_jupiter_uranus.pdf", blue_plot)
 ```
 
 ```{r}
 (complexity_plot <- ggarrange(plotlist = list(blue_jupiter_plot, blue_uranus_plot, red_jupiter_plot, red_uranus_plot), labels="AUTO", nrow=2, ncol=2, common.legend = T, legend="bottom") 
  ) 
-figsave("blue_red_complexity.pdf", complexity_plot)
+figsave("05_blue_red_complexity.pdf", complexity_plot)
 ```
 
 
@@ -617,7 +612,7 @@ plot_logADD_by_logCOMPLEX(m, d, teamUI)
 (p <- mcmc_areas(m, regex_pars = c("^b_")) + theme_bw() + ggtitle("Population-level beta parameter distributions"))
 ```
 ```{r}
-figsave("pop_level_betas.pdf", p)
+figsave("05_pop_level_betas.pdf", p)
 ```
 
 ```{r}
@@ -680,7 +675,7 @@ plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "N
 )
 ```
 ```{r}
-figsave("condeffect_added_vs_complex_green_jupiter.pdf", p)
+figsave("05_condeffect_added_vs_complex_green_jupiter.pdf", p)
 ```
 ```{r}
 (p <- plot_logADD_by_logCOMPLEX(m, d, condeffect_logADD_by_logCOMPLEX(m, d, "Blue", "Jupiter", removed=q95(data$DEL), duplicates=q95(data$DUP))) + scale_x_continuous(trans="log1p", breaks=c(0,10,100,1000, 4000)) + theme_bw() + ylab("Estimated new duplicates") + xlab("Added lines (log scale)") + scale_y_continuous(limits=c(0,250))
@@ -693,7 +688,7 @@ figsave("condeffect_added_vs_complex_green_jupiter.pdf", p)
 )
 ```
 ```{r}
-figsave("condeffect_added_vs_complex_red_jupiter.pdf", p)
+figsave("05_condeffect_added_vs_complex_red_jupiter.pdf", p)
 ```
 
 

@@ -337,11 +337,6 @@ Rootogram, sized according to reasonable (observed) values.
 rootogram + scale_x_continuous(limits=c(0,50)) + ggtitle("Suspended rootogram, scaled to 0-50 prediction interval")
 ```
 
-```{r rootogram}
-rootogram <- pp_check(m, type = "rootogram", style="suspended")
-rootogram
-```
-
 ```{r}
 topleft=data.frame(x=c(0, 0),
                    xend=c(17, 17), 
