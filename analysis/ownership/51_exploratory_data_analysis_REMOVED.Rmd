@@ -35,19 +35,20 @@ levels(data$authorteam)
 
 # Exploratory Data Analysis
 
-We see that duplicates are rarely removed - the 95th percentile is 0.
+We see that duplicates are rarely removed - the 95th percentile is 0, and the 99th is 3.
 
 ```{r}
 data |> summarize(min(REMOVED), median(REMOVED), q95(REMOVED), q99(REMOVED), max(REMOVED))
 ```
 
-But there are still changes when teams remove duplicates---some teams more than others. And some removals are large - even though most are small.
+But there are still changes when teams remove duplicates---some teams more than others.
+And some removals are large - even though most are small.
 
 ```{r}
 data |> filter(REMOVED > 0) |> group_by(committerteam, REMOVED) |> tally()
 ```
 
-Most of the introduced duplicates are small (single-digits), but some are large, ranging into the hundreds for the IntTest repo.
+For the most part, teams do not remove duplicates. If they do, they often remove few (single-digits).
 
 ```{r}
 changesPerRepoAndTeam <- data |> group_by(repo, committerteam) |> summarise(fileschanged=n())
@@ -60,7 +61,7 @@ zeros_ratio <- merge(changesPerRepoAndTeam, zerosPerRepoAndTeam) |> mutate(remov
 
 ```{r}
 plot_REMOVED_issues_in_repo <- function(aRepo, team_selector) {
-  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=REMOVED, color=team, fill=team)) + geom_histogram(aes(y=..density..), position = "dodge", binwidth = 1) + ggtitle(paste("REMOVED duplicates in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("proportion of filechanges") + xlab("Number of duplicates REMOVED in the change") + ylim(0,0.1)
+  data |> filter(repo == aRepo, team_selector(committerteam)) |> mutate(team = committerteam) |> group_by(team) |> ggplot(aes(x=REMOVED, color=team, fill=team)) + geom_histogram(aes(y=after_stat(density)), position = "dodge", binwidth = 1) + ggtitle(paste("REMOVED duplicates in repo", aRepo)) + scale_fill_manual(name="team", values=teamcolors) + scale_colour_manual(name="team", values=teamcolors) + ylab("proportion of filechanges") + xlab("Number of duplicates REMOVED in the change") + ylim(0,0.1)
 }
 three_teams <- function(x) x %in% c(RED, BLUE, GREEN)
 
@@ -86,6 +87,8 @@ repo_committerteam <- data |> group_by(repo, committerteam) |> summarize(q95=qua
                                                                          median_removed=median(DEL)) |> mutate(team=committerteam)
 ```
 
+### 95th percentile
+
 ```{r}
 repo_committerteam |> ggplot(aes(x=team, y=repo)) +
     geom_tile(aes(fill=q95)) +
@@ -94,7 +97,11 @@ repo_committerteam |> ggplot(aes(x=team, y=repo)) +
     ggtitle(paste("Observed 95% REMOVED clones by team and repo"))
 ```
 
-The 95% quantile plots show that for many repos, and many teams in those repos, in 19 out of 20 file changes, no duplicates were added. The outlier is INTTEST, where many teams can be expected to REMOVEDuce single-digit duplicates. In the NEPTUNE repository, we also can expect some more duplicate REMOVEDuction than in the others.
+The 95% quantile plots show that for many repos, and many teams in those repos, in 19 out of 20 file changes, no duplicates were removed.
+The outlier is IntTest, where many teams have removed single-digit duplicates.
+In the Neptune repository, we also can see some more duplicate removals by the Architect and Green teams.
+
+### 99th percentile
 
 ```{r}
 repo_committerteam |> ggplot(aes(x=team, y=repo)) +
@@ -105,9 +112,11 @@ repo_committerteam |> ggplot(aes(x=team, y=repo)) +
 
 ```
 
-The pattern repeats for the 99% quantile. Integration test can be expected to have more duplicates REMOVEDuced, and in particular the Brown team stands out.
-In the Neptune repo, however, it is the Blue and Green teams that are a bit more likely to REMOVEDuce duplicates.
+The pattern repeats for the 99% quantile.
+More duplicates are removed in IntTest, and Jupiter is now also starting to show some removals.
+In the Neptune repo, however, it is still the Architect and Green teams that remove duplicates, with Blue and Brown trailing.
 
+### Maximum removed duplicates
 
 ```{r}
 repo_committerteam|> ggplot(aes(x=team, y=repo)) +
