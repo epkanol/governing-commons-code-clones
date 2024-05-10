@@ -30,7 +30,7 @@ Standard shell globbing rules can be used (but beware to escape them from the re
 
 In case you want to run with a separately stored cache directory, use the CACHE environment variable, and make sure that it is mounted into the container. For instance:
 
-`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons
+`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons`
 
 #### RELOO
 
@@ -38,16 +38,16 @@ Setting the `RELOO` environment variable to `TRUE` will run the reloo function,
 which performs exact Leave-One-Out Cross-Validation once per datapoint signaled as potentially influential by the regular `loo` function.
 The result of the reloo will be stored in the output directory, where it can be further analysed (e.g. plotted).
 
-`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e RELOO=TRUE -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons
+`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e RELOO=TRUE -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons`
 
 Beware that running `reloo` might take several days to complete, so best done over long weekends, or on a machine which you do not interact with on a daily basis.
-The output of the docker run command will tell if it is performing the `reloo` step, and the state of the models can be inspected via the `docker top` command.
+The output of the `docker run` command will tell if it is performing the `reloo` step, and the state of the models can be inspected via the `docker top` command.
 
 ```
 user@host:> docker ps
 CONTAINER ID   IMAGE                                                                     COMMAND                  CREATED          STATUS                 PORTS     NAMES
 6ee210bac03e   ownership-commons                                                         "/home/app/render_al…"   46 minutes ago   Up 46 minutes                    vigorous_chebyshev
-user@host:> docker top
+user@host:> docker top 6ee210bac03e
 UID                 PID                 PPID                C                   STIME               TTY                 TIME                CMD
 2000                56576               56554               0                   11:49               ?                   00:00:00            /bin/sh /home/app/render_all.sh
 2000                56618               56576               17                  11:49               ?                   00:08:18            /usr/local/lib/R/bin/exec/R --no-save --no-restore -e rmarkdown::render("analysis/02_intercept_only_model.Rmd",~+~params=list(cache="../ownership/.cache",~+~reloo=TRUE),~+~output_dir="ownership/output")
@@ -59,12 +59,12 @@ UID                 PID                 PPID                C                   
 
 The number of parallelly executing models is controlled via the `CORES` environment, which defaults to 2.
 
-`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e CORES=2 -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons
+`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e CORES=2 -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons`
 
 #### THREADS
 
 The number of threads in each model is controlled via the `THREADS` environment, which defaults to 4.
 
-`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e THREADS=4 -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons
+`docker run --mount type=bind,source=${PWD}/ownership,target=/home/app/ownership -e THREADS=4 -e PREFIX=02 -e CACHE="../ownership/.cache" ownership-commons`
 
-The number of physical CPUs (i.e. ignoring hyperthreads and fake CPUs) should be equal or less than `CORES*THREADS`, as Stan and brms are quite CPU-intensive.
+The number of physical CPUs (i.e. ignoring hyperthreads and fake CPUs) should be equal or less than `CORES*THREADS`, as Stan and brms are both quite CPU-intensive.
