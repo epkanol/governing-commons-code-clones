@@ -1,5 +1,28 @@
 # governing-commons-code-clones
-Replication package for the EMSE paper "Governing the Commons: Code Ownership and Code Clones in Large Scale Software Development"
+Replication package for the paper "Governing the Commons: Code Ownership and Code Clones in Large Scale Software Development"
+
+## Structure of this repository
+
+* Root directory
+  Contains a Dockerfile that can be used to build a reproducible Docker image,
+  including the full, anonymized, data set used in the paper, and the complete
+  Renv file specifying the complete R environment.
+
+* `analysis/ownership`
+  Contains a number of RMarkdown files (named 01_xxx, 02_xxx, and so on),
+  that deals with different aspects (EDA, modeling) of the analysis.
+  All figures in the paper are generated from the file `99_article_illustrations.html`
+
+* `analysis/.cache`
+  Contains precomputed R data objects (models, reloo results) that is used
+  to calculate results, unless you want to redo the analysis (see below in the
+  CACHE section).
+
+* `analysis/output`
+  Contains HTML and PDF files that were generated from the RMarkdown in the
+  docker image. These files are not included in the docker image - to generate
+  your own versions of them, you bind a directory inside the docker image to
+  a directory on the machine where you run the docker image (see below).
 
 ## Steps to build and run docker image
 
