@@ -22,9 +22,9 @@ RUN apt-get update && apt-get install -y \
     libssl-dev=3.0.2-0ubuntu1.15 \
     pandoc=2.9.2.1-3ubuntu2 \
     libexpat1=2.4.7-1ubuntu0.3 \
-    libnode-dev=12.22.9~dfsg-1ubuntu3.4 \
-    libcurl4=7.81.0-1ubuntu1.15 \
-    libcurl4-openssl-dev=7.81.0-1ubuntu1.15 \
+    libnode-dev=12.22.9~dfsg-1ubuntu3.5 \
+    libcurl4=7.81.0-1ubuntu1.16 \
+    libcurl4-openssl-dev=7.81.0-1ubuntu1.16 \
     libfontconfig1-dev=2.13.1-4.2ubuntu5 \
     libharfbuzz-dev=2.7.4-1ubuntu3.1 \
     libfribidi-dev=1.0.8-2ubuntu3.1 \
