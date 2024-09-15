@@ -237,7 +237,7 @@ figsave("99-observed-INTROD-4teams-Jupiter.pdf", p)
 Note that we already calculated yrep (from M2) above, so we'll just reuse it here.
 
 ```{r posterior_q99_by_team}
-(p <- ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quartile per team")
+(p <- ppc_stat_grouped(y = d$y, yrep, stat = "q99", group = d$team) + ggtitle("Posterior predictive 99% quartile per team") + theme(axis.text=element_text(size=14, angle=45))
 )
 ```
 ```{r}
